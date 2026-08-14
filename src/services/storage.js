@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
+const { randomUUID } = require('crypto');
 const multer = require('multer');
-const { v4: uuid } = require('uuid');
 const mime = require('mime-types');
 const sanitize = require('sanitize-filename');
 const config = require('../config');
@@ -23,7 +23,7 @@ const storage = multer.diskStorage({
     cb(null, dir);
   },
   filename(req, file, cb) {
-    cb(null, `${uuid()}-${sanitize(file.originalname)}`);
+    cb(null, `${randomUUID()}-${sanitize(file.originalname)}`);
   },
 });
 

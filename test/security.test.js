@@ -6,7 +6,7 @@ const { workbookTemplateBuffer, parseStaff } = require('../src/services/excel');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const XLSX = require('xlsx');
+const ExcelJS = require('exceljs');
 
 test('defines exactly ten ordered event modules', () => {
   assert.equal(MODULES.length, 10);
@@ -25,15 +25,15 @@ test('reset token hashing is deterministic and not plaintext', () => {
   assert.notEqual(hashToken(token), token);
 });
 
-test('staff template can be parsed and validates required fields', () => {
+test('staff template can be parsed and validates required fields', async () => {
   const tmp = path.join(os.tmpdir(), `staff-${Date.now()}.xlsx`);
-  const wb = XLSX.read(workbookTemplateBuffer());
-  XLSX.utils.sheet_add_json(wb.Sheets.Personal, [
-    { Nombre: 'Ana', Apellido: 'Lopez', CUIT: '20-12345678-3', 'Funcion / Cargo': 'Tecnica' },
-    { Nombre: '', Apellido: 'Perez', CUIT: 'bad', 'Funcion / Cargo': 'Seguridad' },
-  ], { origin: -1, skipHeader: true });
-  XLSX.writeFile(wb, tmp);
-  const parsed = parseStaff(tmp);
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(await workbookTemplateBuffer());
+  const sheet = workbook.getWorksheet('Personal');
+  sheet.addRow(['Ana', 'Lopez', '20-12345678-3', 'Tecnica']);
+  sheet.addRow(['', 'Perez', 'bad', 'Seguridad']);
+  await workbook.xlsx.writeFile(tmp);
+  const parsed = await parseStaff(tmp);
   fs.unlinkSync(tmp);
   assert.equal(parsed.total, 2);
   assert.equal(parsed.valid, 1);

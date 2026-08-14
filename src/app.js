@@ -241,14 +241,14 @@ app.post('/events/:eventId/modules/identificacion/company', requireLogin, loadAu
   res.redirect(`/events/${req.event.id}/modules/identificacion`);
 });
 
-app.get('/events/:eventId/staff/template', requireLogin, loadAuthorizedEvent, (req, res) => {
+app.get('/events/:eventId/staff/template', requireLogin, loadAuthorizedEvent, async (req, res) => {
   res.setHeader('Content-Disposition', 'attachment; filename="plantilla-personal.xlsx"');
-  res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(workbookTemplateBuffer());
+  res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(await workbookTemplateBuffer());
 });
 
 app.post('/events/:eventId/staff/import', requireLogin, loadAuthorizedEvent, upload.single('file'), async (req, res) => {
   const attachment = await saveAttachment({ file: req.file, eventId: req.event.id, moduleKey: 'identificacion', userId: req.user.id });
-  const parsed = parseStaff(req.file.path);
+  const parsed = await parseStaff(req.file.path);
   const importRow = await db.query('insert into staff_imports (event_id,attachment_id,total_rows,valid_rows,error_rows,errors,imported_by,confirmed_at) values ($1,$2,$3,$4,$5,$6,$7,case when $5=0 then now() else null end) returning id', [req.event.id, attachment.id, parsed.total, parsed.valid, parsed.invalid, JSON.stringify(parsed.errors), req.user.id]);
   if (parsed.invalid === 0) {
     await db.tx(async (client) => {
