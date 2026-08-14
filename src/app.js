@@ -66,11 +66,10 @@ function parseBody(schema, body) {
 }
 
 app.get('/branding/logo', async (req, res) => {
-  const attachmentId = app.locals.settings.logo_attachment_id;
-  if (!attachmentId) return res.status(404).end();
   const file = (await db.query(
-    'select * from attachments where id=$1 and event_id is null and deleted_at is null',
-    [attachmentId],
+    `select a.* from system_settings s
+     join attachments a on a.id::text=s.value
+     where s.key='logo_attachment_id' and a.event_id is null and a.deleted_at is null`,
   )).rows[0];
   if (!file || !String(file.mime_type).startsWith('image/')) return res.status(404).end();
   res.setHeader('Cache-Control', 'no-store');
@@ -452,10 +451,14 @@ app.get('/admin/events', requireLogin, requireRole(ROLES.ADMIN), async (req, res
   const events = await db.query(`select e.*, u.first_name || ' ' || u.last_name producer from events e join users u on u.id=e.owner_user_id order by e.created_at desc`);
   const managers = await db.query(`select u.id, u.first_name || ' ' || u.last_name name from users u join user_roles ur on ur.user_id=u.id join roles r on r.id=ur.role_id where r.name='GERENCIADORA' and u.status='ACTIVO' order by name`);
   const managerOptions = managers.rows.map((m)=>`<option value="${m.id}">${esc(m.name)}</option>`).join('');
-  res.send(layout(req, 'Eventos', `<h1>Eventos</h1>${table(['Evento','Artista','Productor','Lugar','Estado','Accion','Gerenciadora'], events.rows.map((e)=>`<tr><td>${esc(e.name)}</td><td>${esc(e.artist)}</td><td>${esc(e.producer)}</td><td>${esc(e.venue)}</td><td>${esc(e.status)}</td><td><a href="/events/${e.id}">Abrir</a></td><td><form method="post" action="/admin/events/${e.id}/manager"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="manager_id">${managerOptions}</select><button>Asignar</button></form></td></tr>`))}`));
+  res.send(layout(req, 'Eventos', `<h1>Eventos</h1>${table(['Evento','Artista','Productor','Lugar','Estado','Accion','Gerenciadora'], events.rows.map((e)=>`<tr><td>${esc(e.name)}</td><td>${esc(e.artist)}</td><td>${esc(e.producer)}</td><td>${esc(e.venue)}</td><td>${esc(e.status)}</td><td><a href="/events/${e.id}">Abrir</a></td><td>${managerOptions ? `<form method="post" action="/admin/events/${e.id}/manager"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="manager_id">${managerOptions}</select><button>Asignar</button></form>` : '<small>Sin gerenciadoras activas</small>'}</td></tr>`))}`));
 });
 
 app.post('/admin/events/:id/manager', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+  if (!req.body.manager_id) {
+    flash(req, 'error', 'Seleccione una gerenciadora activa.');
+    return res.redirect('/admin/events');
+  }
   await db.query('insert into event_manager_access (event_id,user_id) values ($1,$2) on conflict do nothing', [req.params.id, req.body.manager_id]);
   await audit(req.user.id, 'asignar_gerenciadora', 'events', req.params.id, { manager_id: req.body.manager_id });
   res.redirect('/admin/events');
