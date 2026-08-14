@@ -81,7 +81,6 @@ No guardar secretos reales en el repositorio.
 - Adjuntos originales en almacenamiento local, metadata en PostgreSQL, límite configurable de 200 MB.
 - Vista/descarga de archivos, PDF por módulo y ZIP completo de evento para administradores.
 - Identidad configurable: nombre, título y logo.
-- Auditoría de acciones relevantes.
 - Updater administrativo registrado y script controlado de servidor.
 
 ## Producción

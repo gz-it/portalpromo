@@ -422,8 +422,8 @@ app.post('/profile', requireLogin, async (req, res) => {
 });
 
 app.get('/admin', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
-  const counts = await db.query(`select (select count(*) from users) users, (select count(*) from events) events, (select count(*) from audit_logs) audits`);
-  res.send(layout(req, 'Administracion', `<section class="admin-grid">${['Productores:/admin/users','Eventos:/admin/events','Revisiones:/admin/reviews','Configuración:/admin/settings','Auditoría:/admin/audit'].map((x)=>{const[l,h]=x.split(':'); return `<a class="panel admin-tile" href="${h}"><b>${l}</b></a>`}).join('')}</section><p class="panel">Usuarios: ${counts.rows[0].users} · Eventos: ${counts.rows[0].events} · Auditoría: ${counts.rows[0].audits}</p>`));
+  const counts = await db.query(`select (select count(*) from users) users, (select count(*) from events) events`);
+  res.send(layout(req, 'Administracion', `<section class="admin-grid">${['Productores:/admin/users','Eventos:/admin/events','Revisiones:/admin/reviews','Configuración:/admin/settings'].map((x)=>{const[l,h]=x.split(':'); return `<a class="panel admin-tile" href="${h}"><b>${l}</b></a>`}).join('')}</section><p class="panel">Usuarios: ${counts.rows[0].users} · Eventos: ${counts.rows[0].events}</p>`));
 });
 
 app.get('/admin/users', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
@@ -486,11 +486,6 @@ app.post('/admin/settings/identity', requireLogin, requireRole(ROLES.ADMIN), upl
   await loadSettings(app);
   await audit(req.user.id, 'cambiar_identidad', 'system_settings', 'identity');
   res.redirect('/admin/settings');
-});
-
-app.get('/admin/audit', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
-  const logs = await db.query(`select a.*, u.username from audit_logs a left join users u on u.id=a.user_id order by a.created_at desc limit 200`);
-  res.send(layout(req, 'Auditoria', `<h1>Auditoría</h1>${table(['Fecha','Usuario','Acción','Entidad','Detalle'], logs.rows.map((l)=>`<tr><td>${esc(l.created_at)}</td><td>${esc(l.username)}</td><td>${esc(l.action)}</td><td>${esc(l.entity_type)} ${esc(l.entity_id)}</td><td>${esc(JSON.stringify(l.detail))}</td></tr>`))}`));
 });
 
 app.post('/admin/updates/check', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
