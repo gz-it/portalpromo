@@ -37,5 +37,8 @@
   },
   "devDependencies": {
     "supertest": "^7.0.0"
+  },
+  "overrides": {
+    "uuid": "11.1.1"
   }
 }
