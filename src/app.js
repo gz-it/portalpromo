@@ -19,6 +19,7 @@ const {
   isManager,
   canViewEventFile,
   canDownloadEventFile,
+  canEditEventContent,
   canDeleteEventFile,
 } = require('./middleware/auth');
 const { csrf } = require('./middleware/csrf');
@@ -172,13 +173,13 @@ app.get('/dashboard', requireLogin, async (req, res) => {
   res.send(layout(req, 'Mis eventos', `<section class="toolbar"><div><h1>${isManager(req.user) ? 'Eventos autorizados' : 'Mis eventos'}</h1><p>Entrar, abrir evento, elegir modulo, cargar y guardar.</p></div>${!isManager(req.user) ? '<a class="primary" href="/events/new">+ Crear Evento</a>' : ''}</section><section class="cards">${cards || '<p class="empty">No hay eventos.</p>'}</section>`));
 });
 
-app.get('/events/new', requireLogin, (req, res) => res.send(layout(req, 'Crear evento', `<form method="post" action="/events" class="panel form-grid">
+app.get('/events/new', requireLogin, requireRole(ROLES.PRODUCER), (req, res) => res.send(layout(req, 'Crear evento', `<form method="post" action="/events" class="panel form-grid">
   <input type="hidden" name="_csrf" value="${req.csrfToken}">
   ${['Nombre del evento:name','Artista:artist','Fecha del show:show_date','Lugar / Venue:venue','Ciudad:city','Provincia:province'].map((x)=>{const [l,n]=x.split(':'); return `<label>${l}<input name="${n}" ${n==='show_date'?'type="date"':''} required></label>`}).join('')}
   <label class="span">Fechas adicionales<textarea name="extra_dates" placeholder="Una fecha por linea, formato AAAA-MM-DD"></textarea></label>
   <button class="primary span">Crear Evento</button></form>`)));
 
-app.post('/events', requireLogin, async (req, res) => {
+app.post('/events', requireLogin, requireRole(ROLES.PRODUCER), async (req, res) => {
   const data = parseBody(z.object({ name:z.string().min(1), artist:z.string().min(1), show_date:z.string().min(1), venue:z.string().min(1), city:z.string().min(1), province:z.string().min(1), extra_dates:z.string().optional() }), req.body);
   const event = await db.tx(async (client) => {
     const created = await client.query(`insert into events (owner_user_id,created_by,name,artist,venue,city,province) values ($1,$1,$2,$3,$4,$5,$6) returning *`, [req.user.id, data.name, data.artist, data.venue, data.city, data.province]);
@@ -203,6 +204,7 @@ async function rowsForModule(eventId, key) {
 
 app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent, async (req, res) => {
   const key = req.params.moduleKey;
+  const canEdit = canEditEventContent(req.user, req.event);
   await loadModuleStatuses(req.event);
   const company = (await db.query('select * from event_companies where event_id=$1', [req.event.id])).rows[0] || {};
   const files = await db.query('select * from attachments where event_id=$1 and module_key=$2 and deleted_at is null order by created_at desc', [req.event.id, key]);
@@ -210,14 +212,15 @@ app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent
   let content = '';
   if (key === 'identificacion') {
     const staff = await db.query('select * from event_staff where event_id=$1 order by created_at desc', [req.event.id]);
-    content = `<form method="post" action="/events/${req.event.id}/modules/identificacion/company" class="panel form-grid">
+    const staffTable = table(['Nombre','CUIT','Cargo','Empresa'], staff.rows.map((p)=>`<tr><td>${esc(p.first_name)} ${esc(p.last_name)}</td><td>${esc(p.cuit)}</td><td>${esc(p.role_title)}</td><td>${esc(p.company)}</td></tr>`));
+    content = canEdit ? `<form method="post" action="/events/${req.event.id}/modules/identificacion/company" class="panel form-grid">
       <input type="hidden" name="_csrf" value="${req.csrfToken}">
       ${[['Razón Social','legal_name'],['CUIT','cuit'],['Responsable','responsible'],['Teléfono','phone'],['Email','email']].map(([l,n])=>`<label>${l}<input name="${n}" value="${esc(company[n])}"></label>`).join('')}
       <button class="primary span">Guardar identificación</button></form>
       <section class="panel"><div class="toolbar"><h2>Personal del Evento</h2><div><a class="button" href="/events/${req.event.id}/staff/template">Descargar plantilla Excel</a></div></div>
       <form method="post" enctype="multipart/form-data" action="/events/${req.event.id}/staff/import?_csrf=${req.csrfToken}" class="upload-form"><input type="file" name="file" accept=".xlsx,.xls,.csv" required><button>Subir Excel</button><progress hidden max="100"></progress></form>
       <form method="post" action="/events/${req.event.id}/staff" class="inline-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}">${['first_name:Nombre','last_name:Apellido','cuit:CUIT','role_title:Función / Cargo','company:Empresa','phone:Teléfono','email:Email'].map((x)=>{const [n,l]=x.split(':'); return `<input name="${n}" placeholder="${l}" ${['first_name','last_name','cuit','role_title'].includes(n)?'required':''}>`}).join('')}<button>+ Agregar persona</button></form>
-      ${table(['Nombre','CUIT','Cargo','Empresa'], staff.rows.map((p)=>`<tr><td>${esc(p.first_name)} ${esc(p.last_name)}</td><td>${esc(p.cuit)}</td><td>${esc(p.role_title)}</td><td>${esc(p.company)}</td></tr>`))}</section>`;
+      ${staffTable}</section>` : `<section class="readonly-details"><div><small>Razon social</small><b>${esc(company.legal_name || 'Sin completar')}</b></div><div><small>CUIT</small><b>${esc(company.cuit || 'Sin completar')}</b></div><div><small>Responsable</small><b>${esc(company.responsible || 'Sin completar')}</b></div><div><small>Telefono</small><b>${esc(company.phone || 'Sin completar')}</b></div><div><small>Email</small><b>${esc(company.email || 'Sin completar')}</b></div></section><section class="dossier-section"><div class="section-heading"><h2>Personal del evento</h2><span>${staff.rowCount} personas informadas</span></div>${staffTable}</section>`;
   } else if (['seguros','habilitaciones','servicios','prensa','tecnica','sponsors'].includes(key)) {
     const action = `/events/${req.event.id}/modules/${key}/items?_csrf=${req.csrfToken}`;
     const categories = {
@@ -228,8 +231,8 @@ app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent
       tecnica: ['Rider Técnico','Audio','Iluminación','Pantallas / Video','Backline','Stage Plot','Hospitality','Catering','Otros'],
       sponsors: ['Sponsor','Acuerdo preexistente del Club'],
     }[key];
-    content = `<form method="post" enctype="multipart/form-data" action="${action}" class="panel form-grid upload-form">
-      <label>Categoria<select name="category">${optionList(categories)}</select></label><label>Tipo / Marca / Prestador<input name="title"></label><label>Numero / Vigencia<input name="reference"></label><label class="span">Observacion<textarea name="observation"></textarea></label><label class="span">Archivo<input type="file" name="file" required></label><progress hidden max="100"></progress><button class="primary span">Guardar</button></form>`;
+    content = canEdit ? `<form method="post" enctype="multipart/form-data" action="${action}" class="panel form-grid upload-form">
+      <label>Categoria<select name="category">${optionList(categories)}</select></label><label>Tipo / Marca / Prestador<input name="title"></label><label>Numero / Vigencia<input name="reference"></label><label class="span">Observacion<textarea name="observation"></textarea></label><label class="span">Archivo<input type="file" name="file" required></label><progress hidden max="100"></progress><button class="primary span">Guardar</button></form>` : '<section class="readonly-notice"><b>Vista de solo lectura</b><span>Documentacion cargada por el productor.</span></section>';
   } else if (key === 'comercial') {
     const ticketing = (await db.query('select * from ticketing where event_id=$1', [req.event.id])).rows[0] || {};
     const sectors = await db.query('select * from ticket_sectors where event_id=$1', [req.event.id]);
@@ -238,9 +241,14 @@ app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent
     <section class="panel"><h2>Sectores</h2><form method="post" action="/events/${req.event.id}/modules/comercial/sectors" class="inline-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><input name="name" placeholder="Nombre" required><input name="capacity" type="number" placeholder="Capacidad"><input name="price" type="number" step="0.01" placeholder="Precio"><input name="observation" placeholder="Observación"><button>+ Agregar Sector</button></form>${table(['Nombre','Capacidad','Precio','Obs'], sectors.rows.map((s)=>`<tr><td>${esc(s.name)}</td><td>${esc(s.capacity)}</td><td>${esc(s.price)}</td><td>${esc(s.observation)}</td></tr>`))}</section>
     <section class="panel"><h2>Fases de Venta</h2><form method="post" action="/events/${req.event.id}/modules/comercial/phases" class="inline-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><input name="name" placeholder="Nombre" required><input name="date_from" type="date"><input name="date_to" type="date"><button>+ Agregar Fase</button></form>${table(['Nombre','Desde','Hasta'], phases.rows.map((p)=>`<tr><td>${esc(p.name)}</td><td>${esc(p.date_from)}</td><td>${esc(p.date_to)}</td></tr>`))}</section>
     <section class="panel"><h2>Cortesías, promociones, imágenes y legales</h2><form method="post" enctype="multipart/form-data" action="/events/${req.event.id}/modules/comercial/items?_csrf=${req.csrfToken}" class="upload-form inline-grid"><input name="category" value="Imagen/Legal Ticketera"><input name="observation" placeholder="Observación"><input type="file" name="file" required><button>Adjuntar</button><progress hidden max="100"></progress></form></section>`;
+    if (!canEdit) content = `<section class="readonly-details"><div><small>Ticketera</small><b>${esc(ticketing.ticketing_name || 'Sin completar')}</b></div><div><small>Contacto</small><b>${esc(ticketing.contact || 'Sin completar')}</b></div><div><small>Observaciones</small><b>${esc(ticketing.observations || 'Sin observaciones')}</b></div></section><section class="dossier-section"><h2>Sectores</h2>${table(['Nombre','Capacidad','Precio','Observación'], sectors.rows.map((s)=>`<tr><td>${esc(s.name)}</td><td>${esc(s.capacity)}</td><td>${esc(s.price)}</td><td>${esc(s.observation)}</td></tr>`))}</section><section class="dossier-section"><h2>Fases de venta</h2>${table(['Nombre','Desde','Hasta'], phases.rows.map((p)=>`<tr><td>${esc(p.name)}</td><td>${esc(p.date_from)}</td><td>${esc(p.date_to)}</td></tr>`))}</section>`;
   } else if (key === 'aceptacion') {
     const rows = MODULES.filter((m) => m.key !== 'aceptacion').map((m) => `<tr><td>${esc(m.name)}</td><td>${esc(req.event.module_statuses[m.key] || 'PENDIENTE')}</td><td><form method="post" action="/events/${req.event.id}/review/${m.key}"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="status"><option>APROBADO</option><option>OBSERVADO</option><option>PENDIENTE</option></select><input name="observation" placeholder="Observación"><button>Guardar revisión</button></form></td></tr>`);
     content = `<section class="panel"><h2>Aceptación de Contenido</h2>${table(['Módulo','Estado','Revisión'], rows)}</section>`;
+    if (!isManager(req.user)) {
+      const statusRows = MODULES.filter((m) => m.key !== 'aceptacion').map((m) => `<tr><td>${esc(m.name)}</td><td><span class="badge">${esc(req.event.module_statuses[m.key] || 'PENDIENTE')}</span></td></tr>`);
+      content = `<section><div class="section-heading"><h2>Estado de los módulos</h2><span>Vista de solo lectura</span></div>${table(['Módulo','Estado'], statusRows)}</section>`;
+    }
   } else if (key === 'ticketera') {
     const ticketing = (await db.query('select * from ticketing where event_id=$1', [req.event.id])).rows[0] || {};
     const approvals = await db.query('select a.*, u.first_name, u.last_name from ticketing_approvals a left join users u on u.id=a.created_by where event_id=$1 order by created_at desc', [req.event.id]);
@@ -248,6 +256,7 @@ app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent
     ${ticketing.sales_url ? `<a class="primary" target="_blank" href="${esc(ticketing.sales_url)}">Abrir evento en Ticketera</a>` : ''}
     <form method="post" action="/events/${req.event.id}/ticketera/decision" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Decisión<select name="decision"><option>APROBADO</option><option>OBSERVADO</option></select></label><label class="span">Comentario<textarea name="comment"></textarea></label><button>Registrar decisión</button></form>
     ${table(['Decisión','Comentario','Usuario','Fecha'], approvals.rows.map((a)=>`<tr><td>${esc(a.decision)}</td><td>${esc(a.comment)}</td><td>${esc(a.first_name)} ${esc(a.last_name)}</td><td>${esc(a.created_at)}</td></tr>`))}`;
+    if (!isManager(req.user)) content = `<section class="readonly-details"><div><small>Ticketera</small><b>${esc(ticketing.ticketing_name || 'Sin completar')}</b></div><div><small>Link de venta</small><b>${ticketing.sales_url ? `<a target="_blank" href="${esc(ticketing.sales_url)}">Abrir enlace</a>` : 'Sin completar'}</b></div><div><small>Fecha</small><b>${esc(ticketing.sales_date || 'Sin completar')}</b></div><div><small>Observaciones</small><b>${esc(ticketing.sales_observations || 'Sin observaciones')}</b></div></section>${table(['Decisión','Comentario','Usuario','Fecha'], approvals.rows.map((a)=>`<tr><td>${esc(a.decision)}</td><td>${esc(a.comment)}</td><td>${esc(a.first_name)} ${esc(a.last_name)}</td><td>${esc(a.created_at)}</td></tr>`))}`;
   }
   const attachmentCards = files.rows.map((f) => {
     const actions = [];
@@ -265,7 +274,7 @@ app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent
   res.send(layout(req, req.event.name, `${eventHeader(req.event, key)}${downloads}${content}<section class="files">${attachmentCards}</section><section class="panel"><h2>Historial</h2><ul class="history">${history || '<li>Sin movimientos.</li>'}</ul></section>`));
 });
 
-app.post('/events/:eventId/modules/identificacion/company', requireLogin, loadAuthorizedEvent, async (req, res) => {
+app.post('/events/:eventId/modules/identificacion/company', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
   await db.query(`insert into event_companies (event_id,legal_name,cuit,responsible,phone,email) values ($1,$2,$3,$4,$5,$6)
     on conflict (event_id) do update set legal_name=$2,cuit=$3,responsible=$4,phone=$5,email=$6,updated_at=now()`,
     [req.event.id, req.body.legal_name, req.body.cuit, req.body.responsible, req.body.phone, req.body.email]);
@@ -280,7 +289,7 @@ app.get('/events/:eventId/staff/template', requireLogin, loadAuthorizedEvent, as
   res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(await workbookTemplateBuffer());
 });
 
-app.post('/events/:eventId/staff/import', requireLogin, loadAuthorizedEvent, upload.single('file'), async (req, res) => {
+app.post('/events/:eventId/staff/import', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), upload.single('file'), async (req, res) => {
   const attachment = await saveAttachment({ file: req.file, eventId: req.event.id, moduleKey: 'identificacion', userId: req.user.id });
   const parsed = await parseStaff(req.file.path);
   const importRow = await db.query('insert into staff_imports (event_id,attachment_id,total_rows,valid_rows,error_rows,errors,imported_by,confirmed_at) values ($1,$2,$3,$4,$5,$6,$7,case when $5=0 then now() else null end) returning id', [req.event.id, attachment.id, parsed.total, parsed.valid, parsed.invalid, JSON.stringify(parsed.errors), req.user.id]);
@@ -297,14 +306,14 @@ app.post('/events/:eventId/staff/import', requireLogin, loadAuthorizedEvent, upl
   res.redirect(`/events/${req.event.id}/modules/identificacion`);
 });
 
-app.post('/events/:eventId/staff', requireLogin, loadAuthorizedEvent, async (req, res) => {
+app.post('/events/:eventId/staff', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
   await db.query('insert into event_staff (event_id,first_name,last_name,cuit,role_title,company,phone,email) values ($1,$2,$3,$4,$5,$6,$7,$8)', [req.event.id, req.body.first_name, req.body.last_name, req.body.cuit, req.body.role_title, req.body.company, req.body.phone, req.body.email]);
   await markLoaded(req.event.id, 'identificacion', req.user.id);
   await audit(req.user.id, 'agregar_personal', 'events', req.event.id);
   res.redirect(`/events/${req.event.id}/modules/identificacion`);
 });
 
-app.post('/events/:eventId/modules/:moduleKey/items', requireLogin, loadAuthorizedEvent, upload.single('file'), async (req, res) => {
+app.post('/events/:eventId/modules/:moduleKey/items', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), upload.single('file'), async (req, res) => {
   const key = req.params.moduleKey;
   const attachment = await saveAttachment({ file: req.file, eventId: req.event.id, moduleKey: key, userId: req.user.id });
   const title = req.body.title || req.body.category;
@@ -324,26 +333,26 @@ app.post('/events/:eventId/modules/:moduleKey/items', requireLogin, loadAuthoriz
   res.redirect(`/events/${req.event.id}/modules/${key}`);
 });
 
-app.post('/events/:eventId/modules/comercial/ticketing', requireLogin, loadAuthorizedEvent, async (req, res) => {
+app.post('/events/:eventId/modules/comercial/ticketing', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
   await db.query(`insert into ticketing (event_id,ticketing_name,contact,observations) values ($1,$2,$3,$4)
     on conflict (event_id) do update set ticketing_name=$2,contact=$3,observations=$4,updated_at=now()`, [req.event.id, req.body.ticketing_name, req.body.contact, req.body.observations]);
   await markLoaded(req.event.id, 'comercial', req.user.id);
   res.redirect(`/events/${req.event.id}/modules/comercial`);
 });
 
-app.post('/events/:eventId/modules/comercial/sectors', requireLogin, loadAuthorizedEvent, async (req, res) => {
+app.post('/events/:eventId/modules/comercial/sectors', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
   await db.query('insert into ticket_sectors (event_id,name,capacity,price,observation) values ($1,$2,$3,$4,$5)', [req.event.id, req.body.name, req.body.capacity || null, req.body.price || null, req.body.observation]);
   await markLoaded(req.event.id, 'comercial', req.user.id);
   res.redirect(`/events/${req.event.id}/modules/comercial`);
 });
 
-app.post('/events/:eventId/modules/comercial/phases', requireLogin, loadAuthorizedEvent, async (req, res) => {
+app.post('/events/:eventId/modules/comercial/phases', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
   await db.query('insert into sales_phases (event_id,name,date_from,date_to) values ($1,$2,$3,$4)', [req.event.id, req.body.name, req.body.date_from || null, req.body.date_to || null]);
   await markLoaded(req.event.id, 'comercial', req.user.id);
   res.redirect(`/events/${req.event.id}/modules/comercial`);
 });
 
-app.post('/events/:eventId/modules/ticketera/link', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN, ROLES.MANAGER), async (req, res) => {
+app.post('/events/:eventId/modules/ticketera/link', requireLogin, loadAuthorizedEvent, requireRole(ROLES.MANAGER), async (req, res) => {
   await db.query(`insert into ticketing (event_id,ticketing_name,sales_url,sales_date,sales_observations) values ($1,$2,$3,$4,$5)
     on conflict (event_id) do update set ticketing_name=$2,sales_url=$3,sales_date=$4,sales_observations=$5,updated_at=now()`, [req.event.id, req.body.ticketing_name, req.body.sales_url, req.body.sales_date || null, req.body.sales_observations]);
   const owner = (await db.query('select email from users where id=$1', [req.event.owner_user_id])).rows[0];
@@ -352,14 +361,14 @@ app.post('/events/:eventId/modules/ticketera/link', requireLogin, loadAuthorized
   res.redirect(`/events/${req.event.id}/modules/ticketera`);
 });
 
-app.post('/events/:eventId/ticketera/decision', requireLogin, loadAuthorizedEvent, async (req, res) => {
+app.post('/events/:eventId/ticketera/decision', requireLogin, loadAuthorizedEvent, requireRole(ROLES.MANAGER), async (req, res) => {
   if (req.body.decision === 'OBSERVADO' && !req.body.comment) { flash(req, 'error', 'El comentario es obligatorio al observar.'); return res.redirect(`/events/${req.event.id}/modules/ticketera`); }
   await db.query('insert into ticketing_approvals (event_id,decision,comment,created_by) values ($1,$2,$3,$4)', [req.event.id, req.body.decision, req.body.comment, req.user.id]);
   await audit(req.user.id, 'decision_ticketera', 'events', req.event.id, { decision: req.body.decision });
   res.redirect(`/events/${req.event.id}/modules/ticketera`);
 });
 
-app.post('/events/:eventId/review/:moduleKey', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN, ROLES.MANAGER), async (req, res) => {
+app.post('/events/:eventId/review/:moduleKey', requireLogin, loadAuthorizedEvent, requireRole(ROLES.MANAGER), async (req, res) => {
   if (req.body.status === 'OBSERVADO' && !req.body.observation) { flash(req, 'error', 'La observación es obligatoria.'); return res.redirect(`/events/${req.event.id}/modules/aceptacion`); }
   const previous = (await db.query('select status from event_modules where event_id=$1 and module_key=$2', [req.event.id, req.params.moduleKey])).rows[0]?.status;
   await db.tx(async (client) => {
@@ -520,7 +529,7 @@ app.get('/admin/events/:id', requireLogin, requireRole(ROLES.ADMIN), async (req,
 
   const moduleTable = table(
     ['Módulo','Estado','Archivos','Última carga','Acción'],
-    modules.map((module) => `<tr><td><b>${esc(module.module_name)}</b></td><td><span class="badge">${esc(module.status)}</span></td><td>${module.file_count}</td><td>${module.last_upload ? esc(new Date(module.last_upload).toLocaleString('es-AR')) : 'Sin cargas'}</td><td><a href="/events/${event.id}/modules/${module.module_key}">Abrir módulo</a></td></tr>`),
+    modules.map((module) => `<tr><td><b>${esc(module.module_name)}</b></td><td><span class="badge">${esc(module.status)}</span></td><td>${module.file_count}</td><td>${module.last_upload ? esc(new Date(module.last_upload).toLocaleString('es-AR')) : 'Sin cargas'}</td><td><a href="/events/${event.id}/modules/${module.module_key}">Ver detalle</a></td></tr>`),
   );
 
   const fileTable = table(
@@ -556,7 +565,7 @@ app.post('/admin/events/:id/manager', requireLogin, requireRole(ROLES.ADMIN), as
 
 app.get('/admin/reviews', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   const mods = await db.query(`select m.*, e.name event_name from event_modules m join events e on e.id=m.event_id where m.status in ('CARGADO','OBSERVADO') order by m.updated_at desc`);
-  res.send(layout(req, 'Revisiones', `<h1>Revisiones</h1>${table(['Evento','Modulo','Estado','Accion'], mods.rows.map((m)=>`<tr><td>${esc(m.event_name)}</td><td>${esc(m.module_name)}</td><td>${esc(m.status)}</td><td><a href="/events/${m.event_id}/modules/aceptacion">Revisar</a></td></tr>`))}`));
+  res.send(layout(req, 'Revisiones', `<h1>Seguimiento de revisiones</h1>${table(['Evento','Módulo','Estado','Acción'], mods.rows.map((m)=>`<tr><td>${esc(m.event_name)}</td><td>${esc(m.module_name)}</td><td>${esc(m.status)}</td><td><a href="/events/${m.event_id}/modules/aceptacion">Ver estado</a></td></tr>`))}`));
 });
 
 app.get('/admin/settings', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {

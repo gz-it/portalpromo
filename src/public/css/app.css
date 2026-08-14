@@ -77,6 +77,12 @@ th { background: #eef3f8; font-size: 13px; }
 .section-heading h2 { margin: 0; font-size: 20px; }
 .section-heading span { color: var(--muted); font-size: 13px; }
 .row-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+.readonly-notice { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 12px 14px; background: #eef3f8; border: 1px solid var(--line); border-radius: 8px; }
+.readonly-notice span { color: var(--muted); }
+.readonly-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 18px; padding: 18px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.readonly-details div { min-width: 0; display: grid; gap: 4px; }
+.readonly-details small { font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.readonly-details b { overflow-wrap: anywhere; }
 .toast { margin-bottom: 14px; padding: 12px 14px; border-radius: 8px; background: #ecfdf3; border: 1px solid #abefc6; color: var(--ok); font-weight: 700; }
 .toast.error { background: #fef3f2; color: var(--danger); border-color: #fecdca; }
 progress { width: 100%; grid-column: 1 / -1; }

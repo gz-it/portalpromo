@@ -49,8 +49,12 @@ function canDownloadEventFile(user) {
   return isAdmin(user);
 }
 
+function canEditEventContent(user, event) {
+  return user?.roles?.includes(ROLES.PRODUCER) && event?.owner_user_id === user?.id;
+}
+
 function canDeleteEventFile(user, event) {
-  return isAdmin(user) || event?.owner_user_id === user?.id;
+  return canEditEventContent(user, event);
 }
 
 async function loadAuthorizedEvent(req, res, next) {
@@ -85,5 +89,6 @@ module.exports = {
   isManager,
   canViewEventFile,
   canDownloadEventFile,
+  canEditEventContent,
   canDeleteEventFile,
 };
