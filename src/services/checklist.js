@@ -1,10 +1,24 @@
 const db = require('../db');
 
 function summarizeChecklist(items) {
+  if (!items.length) return { complete: 0, missing: 0, warnings: 0, total: 0, percentage: 0 };
   const complete = items.filter((item) => item.state !== 'missing').length;
   const missing = items.filter((item) => item.state === 'missing').length;
   const warnings = items.filter((item) => item.state === 'warning').length;
   return { complete, missing, warnings, total: items.length, percentage: Math.round((complete / items.length) * 100) };
+}
+
+function summarizeModuleCompleteness(items) {
+  const grouped = {};
+  for (const item of items.filter((entry) => entry.moduleKey !== 'aceptacion')) {
+    if (!grouped[item.moduleKey]) grouped[item.moduleKey] = [];
+    grouped[item.moduleKey].push(item);
+  }
+  return Object.fromEntries(Object.entries(grouped).map(([moduleKey, requirements]) => {
+    const summary = summarizeChecklist(requirements);
+    const state = summary.missing ? 'incomplete' : summary.warnings ? 'warning' : 'complete';
+    return [moduleKey, { ...summary, state }];
+  }));
 }
 
 async function buildEventChecklist(eventId) {
@@ -47,7 +61,20 @@ async function buildEventChecklist(eventId) {
     { moduleKey: 'ticketera', label: 'Enlace de venta', state: data.sales_url ? 'complete' : 'missing' },
     { moduleKey: 'aceptacion', label: 'Revisión administrativa completa', state: Number(data.approved_modules) === Number(data.reviewable_modules) ? 'complete' : 'missing', detail: `${data.approved_modules}/${data.reviewable_modules} módulos aprobados` },
   ];
-  return { items, ...summarizeChecklist(items) };
+  const documentItems = items.filter((item) => item.moduleKey !== 'aceptacion');
+  const approved = Number(data.approved_modules);
+  const reviewTotal = Number(data.reviewable_modules);
+  return {
+    items,
+    ...summarizeChecklist(items),
+    document: summarizeChecklist(documentItems),
+    modules: summarizeModuleCompleteness(items),
+    review: {
+      approved,
+      total: reviewTotal,
+      percentage: reviewTotal ? Math.round((approved / reviewTotal) * 100) : 0,
+    },
+  };
 }
 
-module.exports = { buildEventChecklist, summarizeChecklist };
+module.exports = { buildEventChecklist, summarizeChecklist, summarizeModuleCompleteness };
