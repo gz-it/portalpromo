@@ -8,6 +8,7 @@
     "start": "NODE_ENV=production node src/server.js",
     "migrate": "node scripts/migrate.js",
     "seed:admin": "node scripts/seed-admin.js",
+    "seed:demo": "node scripts/seed-demo-users.js",
     "test": "node --test",
     "backup": "node scripts/backup.js",
     "update": "node scripts/update.js"
