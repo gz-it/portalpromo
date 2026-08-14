@@ -51,7 +51,7 @@ app.use(session({
 app.use(attachUser);
 app.use(csrf);
 app.use(async (req, res, next) => {
-  if (!app.locals.settings) await loadSettings(app);
+  if (!app.locals.portalSettings) await loadSettings(app);
   next();
 });
 
@@ -370,7 +370,7 @@ app.post('/events/:eventId/review/:moduleKey', requireLogin, loadAuthorizedEvent
 });
 
 app.get('/events/:eventId/modules/:moduleKey/pdf', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN), async (req, res) => {
-  const buffer = await modulePdf(req.event, req.params.moduleKey, app.locals.settings);
+  const buffer = await modulePdf(req.event, req.params.moduleKey, app.locals.portalSettings);
   res.setHeader('Content-Disposition', `attachment; filename="${req.params.moduleKey}.pdf"`);
   res.type('application/pdf').send(buffer);
 });
@@ -378,7 +378,7 @@ app.get('/events/:eventId/modules/:moduleKey/pdf', requireLogin, loadAuthorizedE
 app.get('/events/:eventId/zip', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN), async (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="${req.event.name}.zip"`);
   res.type('application/zip');
-  await streamEventZip(res, req.event, app.locals.settings);
+  await streamEventZip(res, req.event, app.locals.portalSettings);
 });
 
 app.get('/files/:id/:mode(view|download)', requireLogin, async (req, res) => {
@@ -472,7 +472,7 @@ app.get('/admin/reviews', requireLogin, requireRole(ROLES.ADMIN), async (req, re
 app.get('/admin/settings', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   const version = fs.readFileSync(path.join(config.root, 'VERSION'), 'utf8').trim();
   const updates = await db.query('select * from system_updates order by started_at desc limit 1');
-  res.send(layout(req, 'Configuracion', `<form method="post" action="/admin/settings/identity?_csrf=${req.csrfToken}" enctype="multipart/form-data" class="panel form-grid upload-form"><label>Nombre de Empresa<input name="company_name" value="${esc(app.locals.settings.company_name)}"></label><label>Título del Portal<input name="portal_title" value="${esc(app.locals.settings.portal_title)}"></label><label class="span">Logo<input type="file" name="file" accept="image/*"></label><progress hidden max="100"></progress><button class="primary span">Guardar identidad</button></form>
+  res.send(layout(req, 'Configuracion', `<form method="post" action="/admin/settings/identity?_csrf=${req.csrfToken}" enctype="multipart/form-data" class="panel form-grid upload-form"><label>Nombre de Empresa<input name="company_name" value="${esc(app.locals.portalSettings.company_name)}"></label><label>Título del Portal<input name="portal_title" value="${esc(app.locals.portalSettings.portal_title)}"></label><label class="span">Logo<input type="file" name="file" accept="image/*"></label><progress hidden max="100"></progress><button class="primary span">Guardar identidad</button></form>
   <section class="panel"><h2>Actualizaciones</h2><p>Versión actual: ${esc(version)}</p><p>Último resultado: ${esc(updates.rows[0]?.status || 'Sin ejecuciones')}</p><form method="post" action="/admin/updates/check"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Buscar actualización</button></form><form method="post" action="/admin/updates/run"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button class="primary">Actualizar sistema</button></form></section>`));
 });
 

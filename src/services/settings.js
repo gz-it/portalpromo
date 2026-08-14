@@ -2,8 +2,8 @@ const db = require('../db');
 
 async function loadSettings(app) {
   const result = await db.query('select key, value from system_settings');
-  app.locals.settings = Object.fromEntries(result.rows.map((r) => [r.key, r.value]));
-  return app.locals.settings;
+  app.locals.portalSettings = Object.fromEntries(result.rows.map((r) => [r.key, r.value]));
+  return app.locals.portalSettings;
 }
 
 async function setSetting(key, value, userId) {

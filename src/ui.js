@@ -13,7 +13,7 @@ function optionList(items, selected) {
 }
 
 function layout(req, title, body, options = {}) {
-  const settings = req.app.locals.settings || {};
+  const settings = req.app.locals.portalSettings || {};
   const user = req.user;
   const flash = req.session.flash;
   delete req.session.flash;
@@ -43,7 +43,7 @@ function layout(req, title, body, options = {}) {
 }
 
 function authPage(req, mode = 'login') {
-  const settings = req.app.locals.settings || {};
+  const settings = req.app.locals.portalSettings || {};
   const forms = {
     login: `<form method="post" action="/login" class="panel form-stack">
       <input type="hidden" name="_csrf" value="${req.csrfToken}">
