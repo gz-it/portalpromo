@@ -24,6 +24,8 @@ button:hover, .button:hover, .primary:hover { filter: brightness(.96); }
 .brand-mark, .auth-mark { width: 40px; height: 40px; border-radius: 8px; background: var(--primary); color: white; display: grid; place-items: center; font-weight: 900; }
 .top-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
 .top-actions form { margin: 0; }
+.notification-link { display: inline-flex; align-items: center; gap: 6px; }
+.notification-link span { min-width: 21px; height: 21px; padding: 0 6px; display: inline-grid; place-items: center; border-radius: 999px; background: var(--danger); color: white; font-size: 12px; font-weight: 800; }
 .page { width: min(1180px, calc(100% - 28px)); margin: 24px auto 56px; }
 .page.narrow { width: min(860px, calc(100% - 28px)); }
 .auth { min-height: calc(100vh - 48px); display: grid; grid-template-columns: .9fr 1.1fr; gap: 28px; align-items: center; }
@@ -83,6 +85,12 @@ th { background: #eef3f8; font-size: 13px; }
 .readonly-details div { min-width: 0; display: grid; gap: 4px; }
 .readonly-details small { font-size: 11px; font-weight: 800; text-transform: uppercase; }
 .readonly-details b { overflow-wrap: anywhere; }
+.notification-list { display: grid; gap: 10px; }
+.notification-item { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid transparent; border-radius: 8px; }
+.notification-item.unread { border-left-color: var(--primary); background: #f3faf7; }
+.notification-item h2 { margin: 8px 0 4px; font-size: 18px; }
+.notification-item p { margin: 0 0 6px; color: var(--muted); }
+.notification-item form { flex: 0 0 auto; }
 .toast { margin-bottom: 14px; padding: 12px 14px; border-radius: 8px; background: #ecfdf3; border: 1px solid #abefc6; color: var(--ok); font-weight: 700; }
 .toast.error { background: #fef3f2; color: var(--danger); border-color: #fecdca; }
 progress { width: 100%; grid-column: 1 / -1; }
@@ -116,6 +124,8 @@ progress { width: 100%; grid-column: 1 / -1; }
   .summary-strip div:last-child { border-bottom: 0; }
   .detail-band { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .section-heading { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .notification-item { align-items: stretch; flex-direction: column; }
+  .notification-item button { width: 100%; }
 }
 @media (max-width: 480px) {
   .detail-band { grid-template-columns: 1fr; }

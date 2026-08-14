@@ -4,6 +4,7 @@ const { MODULES, ROLES } = require('../src/constants');
 const { hashToken } = require('../src/utils/security');
 const { canViewEventFile, canDownloadEventFile, canEditEventContent, canReviewEventContent, canDeleteEventFile } = require('../src/middleware/auth');
 const { workbookTemplateBuffer, parseStaff } = require('../src/services/excel');
+const { reviewNotificationMessage } = require('../src/services/notifications');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -63,4 +64,9 @@ test('staff template can be parsed and validates required fields', async () => {
   assert.equal(parsed.valid, 1);
   assert.equal(parsed.invalid, 1);
   assert.ok(parsed.errors.some((e) => e.problem.includes('Falta Nombre')));
+});
+
+test('review notifications include status and optional comment', () => {
+  assert.equal(reviewNotificationMessage('seguros', 'APROBADO'), 'Seguros fue marcado como APROBADO.');
+  assert.equal(reviewNotificationMessage('tecnica', 'OBSERVADO', 'Falta firma'), 'Produccion Tecnica fue marcado como OBSERVADO. Comentario: Falta firma');
 });

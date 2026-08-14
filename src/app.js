@@ -31,6 +31,7 @@ const { moduleCompletion } = require('./utils/completion');
 const { esc, layout, authPage, eventHeader, table, optionList } = require('./ui');
 const { loadSettings, setSetting } = require('./services/settings');
 const { initModules, loadModuleStatuses, markLoaded } = require('./services/events');
+const { notifyEventOwner, reviewNotificationMessage } = require('./services/notifications');
 const { upload, saveAttachment, resolveAttachment } = require('./services/storage');
 const { workbookTemplateBuffer, parseStaff } = require('./services/excel');
 const { modulePdf } = require('./services/pdf');
@@ -53,6 +54,16 @@ app.use(session({
 }));
 app.use(attachUser);
 app.use(csrf);
+app.use(async (req, res, next) => {
+  if (!req.user) return next();
+  try {
+    const unread = await db.query('select count(*) count from notifications where user_id=$1 and read_at is null', [req.user.id]);
+    req.user.unread_notifications = Number(unread.rows[0].count);
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
 app.use(async (req, res, next) => {
   if (!app.locals.portalSettings) await loadSettings(app);
   next();
@@ -366,6 +377,7 @@ app.post('/events/:eventId/ticketera/decision', requireLogin, loadAuthorizedEven
   if (req.body.decision === 'OBSERVADO' && !req.body.comment) { flash(req, 'error', 'El comentario es obligatorio al observar.'); return res.redirect(`/events/${req.event.id}/modules/ticketera`); }
   await db.query('insert into ticketing_approvals (event_id,decision,comment,created_by) values ($1,$2,$3,$4)', [req.event.id, req.body.decision, req.body.comment, req.user.id]);
   await audit(req.user.id, 'decision_ticketera', 'events', req.event.id, { decision: req.body.decision });
+  await notifyEventOwner(req.event.id, 'REVISION_TICKETERA', `Revision de ticketera: ${req.event.name}`, reviewNotificationMessage('ticketera', req.body.decision, req.body.comment), `/events/${req.event.id}/modules/ticketera`);
   res.redirect(`/events/${req.event.id}/modules/ticketera`);
 });
 
@@ -377,6 +389,7 @@ app.post('/events/:eventId/review/:moduleKey', requireLogin, loadAuthorizedEvent
     await client.query('insert into module_status_history (event_id,module_key,previous_status,new_status,observation,created_by) values ($1,$2,$3,$4,$5,$6)', [req.event.id, req.params.moduleKey, previous, req.body.status, req.body.observation, req.user.id]);
   });
   await audit(req.user.id, 'revision_modulo', 'events', req.event.id, { module: req.params.moduleKey, status: req.body.status });
+  await notifyEventOwner(req.event.id, 'REVISION_MODULO', `Revision de ${req.event.name}`, reviewNotificationMessage(req.params.moduleKey, req.body.status, req.body.observation), `/events/${req.event.id}/modules/${req.params.moduleKey}`);
   res.redirect(`/events/${req.event.id}/modules/aceptacion`);
 });
 
@@ -421,6 +434,23 @@ app.post('/files/:id/delete', requireLogin, async (req, res) => {
   await audit(req.user.id, 'eliminar_archivo', 'attachments', file.id, { event_id: file.event_id, module: file.module_key });
   flash(req, 'ok', 'Archivo eliminado.');
   res.redirect(file.event_id ? `/events/${file.event_id}/modules/${file.module_key}` : '/admin/settings');
+});
+
+app.get('/notifications', requireLogin, async (req, res) => {
+  const notifications = await db.query('select * from notifications where user_id=$1 order by created_at desc limit 100', [req.user.id]);
+  const items = notifications.rows.map((notification) => `<article class="notification-item ${notification.read_at ? '' : 'unread'}"><div><span class="badge">${esc(notification.type.replaceAll('_', ' '))}</span><h2>${esc(notification.title)}</h2><p>${esc(notification.message)}</p><small>${esc(new Date(notification.created_at).toLocaleString('es-AR'))}</small></div><form method="post" action="/notifications/${notification.id}/read"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>${notification.read_at ? 'Abrir' : 'Ver y marcar leida'}</button></form></article>`).join('');
+  res.send(layout(req, 'Notificaciones', `<section class="toolbar"><div><h1>Notificaciones</h1><p>${req.user.unread_notifications} pendientes.</p></div>${req.user.unread_notifications ? `<form method="post" action="/notifications/read-all"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Marcar todas como leidas</button></form>` : ''}</section><section class="notification-list">${items || '<p class="empty">No hay notificaciones.</p>'}</section>`));
+});
+
+app.post('/notifications/read-all', requireLogin, async (req, res) => {
+  await db.query('update notifications set read_at=now() where user_id=$1 and read_at is null', [req.user.id]);
+  res.redirect('/notifications');
+});
+
+app.post('/notifications/:id/read', requireLogin, async (req, res) => {
+  const notification = (await db.query('update notifications set read_at=coalesce(read_at,now()) where id=$1 and user_id=$2 returning link', [req.params.id, req.user.id])).rows[0];
+  if (!notification) return res.status(404).send('Notificacion no encontrada');
+  res.redirect(notification.link || '/notifications');
 });
 
 app.get('/profile', requireLogin, (req, res) => res.send(layout(req, 'Perfil', `<form method="post" action="/profile" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}">${['first_name:Nombre','last_name:Apellido','phone:Teléfono','email:Email'].map((x)=>{const[n,l]=x.split(':'); return `<label>${l}<input name="${n}" value="${esc(req.user[n])}" required></label>`}).join('')}<label>Nueva contraseña<input name="password" type="password" minlength="8"></label><button class="primary span">Guardar perfil</button></form>`)));

@@ -21,6 +21,7 @@ function layout(req, title, body, options = {}) {
     <header class="topbar">
       <a class="brand" href="/dashboard">${settings.logo_attachment_id ? '<img src="/branding/logo" alt="Logo">' : '<span class="brand-mark">PP</span>'}<span>${esc(settings.portal_title || 'Portal de Productores')}</span></a>
       <nav class="top-actions">
+        <a class="notification-link" href="/notifications">Notificaciones${user.unread_notifications ? `<span>${user.unread_notifications}</span>` : ''}</a>
         <a href="/profile">${esc(user.first_name)} ${esc(user.last_name)}</a>
         ${user.roles.includes(ROLES.ADMIN) ? '<a href="/admin">Administracion</a>' : ''}
         <form method="post" action="/logout"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Salir</button></form>
