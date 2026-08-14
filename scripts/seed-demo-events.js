@@ -67,7 +67,7 @@ async function ensureModuleData(client, event, moduleKey, userId) {
   if (moduleKey === 'comercial') {
     await client.query(
       `insert into ticketing (event_id,ticketing_name,contact,observations) values ($1,$2,$3,$4)
-       on conflict (event_id) do update set ticketing_name=excluded.ticketing_name,contact=excluded.contact,observations=excluded.observations,updated_at=now()`,
+       on conflict (event_id) do nothing`,
       [event.id, event.ticketing, `${event.responsible} - 11 5555 0101`, 'Configuracion comercial de demostracion'],
     );
     await client.query(
@@ -112,34 +112,28 @@ async function seedEvent(client, spec, userId) {
     'select * from events where owner_user_id=$1 and lower(name)=lower($2) order by created_at limit 1',
     [userId, spec.name],
   )).rows[0];
-  if (!event) {
+  const isNew = !event;
+  if (isNew) {
     event = (await client.query(
       `insert into events (owner_user_id,created_by,name,artist,venue,city,province,status)
        values ($1,$1,$2,$3,$4,$5,$6,'EN_CARGA') returning *`,
       [userId, spec.name, spec.artist, spec.venue, spec.city, spec.province],
     )).rows[0];
-  } else {
-    event = (await client.query(
-      `update events set artist=$2,venue=$3,city=$4,province=$5,status='EN_CARGA',updated_at=now()
-       where id=$1 returning *`, [event.id, spec.artist, spec.venue, spec.city, spec.province],
-    )).rows[0];
   }
   Object.assign(event, spec);
 
-  await client.query('delete from event_dates where event_id=$1', [event.id]);
-  await client.query('insert into event_dates (event_id,show_date) values ($1,$2)', [event.id, spec.showDate]);
+  if (isNew) await client.query('insert into event_dates (event_id,show_date) values ($1,$2)', [event.id, spec.showDate]);
   for (const module of MODULES) {
     await client.query(
       `insert into event_modules (event_id,module_key,module_name) values ($1,$2,$3)
-       on conflict (event_id,module_key) do update set module_name=excluded.module_name`,
+       on conflict (event_id,module_key) do nothing`,
       [event.id, module.key, module.name],
     );
   }
 
   await client.query(
     `insert into event_companies (event_id,legal_name,cuit,responsible,phone,email) values ($1,$2,$3,$4,$5,$6)
-     on conflict (event_id) do update set legal_name=excluded.legal_name,cuit=excluded.cuit,responsible=excluded.responsible,
-       phone=excluded.phone,email=excluded.email,updated_at=now()`,
+     on conflict (event_id) do nothing`,
     [event.id, spec.company, spec.cuit, spec.responsible, '11 5555 0100', `${spec.name.toLowerCase().replace(/\s+/g, '.')}@demo.local`],
   );
   await client.query(
@@ -151,19 +145,25 @@ async function seedEvent(client, spec, userId) {
 
   const activeKeys = MODULES.slice(0, spec.activeModules).map((module) => module.key);
   for (const [index, module] of MODULES.entries()) {
-    let status = 'PENDIENTE';
+    let status = null;
     if (activeKeys.includes(module.key)) {
       status = index < spec.approvedModules ? 'APROBADO' : (spec.observed && index === spec.approvedModules ? 'OBSERVADO' : 'CARGADO');
       await ensureModuleData(client, event, module.key, userId);
     }
-    await client.query('update event_modules set status=$3,updated_at=now() where event_id=$1 and module_key=$2', [event.id, module.key, status]);
-    if (status !== 'PENDIENTE') {
-      await client.query(
-        `insert into module_status_history (event_id,module_key,previous_status,new_status,observation,created_by)
-         select $1,$2,'PENDIENTE',$3,'Datos de demostracion',$4 where not exists
-         (select 1 from module_status_history where event_id=$1 and module_key=$2 and observation='Datos de demostracion')`,
-        [event.id, module.key, status, userId],
+    if (status) {
+      const updated = await client.query(
+        `update event_modules set status=$3,updated_at=now()
+         where event_id=$1 and module_key=$2 and status='PENDIENTE'`,
+        [event.id, module.key, status],
       );
+      if (updated.rowCount) {
+        await client.query(
+          `insert into module_status_history (event_id,module_key,previous_status,new_status,observation,created_by)
+           select $1,$2,'PENDIENTE',$3,'Datos de demostracion',$4 where not exists
+           (select 1 from module_status_history where event_id=$1 and module_key=$2 and observation='Datos de demostracion')`,
+          [event.id, module.key, status, userId],
+        );
+      }
     }
   }
   return `${spec.name}: ${spec.activeModules * 10}% completado`;
