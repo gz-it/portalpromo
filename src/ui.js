@@ -19,7 +19,7 @@ function layout(req, title, body, options = {}) {
   delete req.session.flash;
   const nav = user ? `
     <header class="topbar">
-      <a class="brand" href="/dashboard">${settings.logo_attachment_id ? `<img src="/files/${settings.logo_attachment_id}/view" alt="">` : '<span class="brand-mark">PP</span>'}<span>${esc(settings.portal_title || 'Portal de Productores')}</span></a>
+      <a class="brand" href="/dashboard">${settings.logo_attachment_id ? '<img src="/branding/logo" alt="Logo">' : '<span class="brand-mark">PP</span>'}<span>${esc(settings.portal_title || 'Portal de Productores')}</span></a>
       <nav class="top-actions">
         <a href="/profile">${esc(user.first_name)} ${esc(user.last_name)}</a>
         ${user.roles.includes(ROLES.ADMIN) ? '<a href="/admin">Administracion</a>' : ''}
@@ -67,7 +67,7 @@ function authPage(req, mode = 'login') {
     </form>`,
   };
   return layout(req, 'Acceso', `<section class="auth">
-    <div><div class="auth-mark">${settings.logo_attachment_id ? `<img src="/files/${settings.logo_attachment_id}/view" alt="">` : 'PP'}</div>
+    <div><div class="auth-mark">${settings.logo_attachment_id ? '<img src="/branding/logo" alt="Logo">' : 'PP'}</div>
     <h1>${esc(settings.company_name || 'Portal de Productores')}</h1><p>${esc(settings.portal_title || 'Gestion documental de eventos')}</p></div>
     ${forms[mode]}
   </section>`, { narrow: true });

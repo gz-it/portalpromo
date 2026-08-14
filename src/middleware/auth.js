@@ -41,6 +41,18 @@ function isManager(user) {
   return user?.roles?.includes(ROLES.MANAGER);
 }
 
+function canViewEventFile(user) {
+  return isAdmin(user) || isManager(user);
+}
+
+function canDownloadEventFile(user) {
+  return isAdmin(user);
+}
+
+function canDeleteEventFile(user, event) {
+  return isAdmin(user) || event?.owner_user_id === user?.id;
+}
+
 async function loadAuthorizedEvent(req, res, next) {
   const id = req.params.eventId || req.params.id;
   const eventResult = await db.query(
@@ -64,4 +76,14 @@ async function loadAuthorizedEvent(req, res, next) {
   return res.status(403).send('Acceso denegado');
 }
 
-module.exports = { attachUser, requireLogin, requireRole, loadAuthorizedEvent, isAdmin, isManager };
+module.exports = {
+  attachUser,
+  requireLogin,
+  requireRole,
+  loadAuthorizedEvent,
+  isAdmin,
+  isManager,
+  canViewEventFile,
+  canDownloadEventFile,
+  canDeleteEventFile,
+};

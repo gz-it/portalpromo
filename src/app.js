@@ -10,7 +10,17 @@ const { z } = require('zod');
 const db = require('./db');
 const config = require('./config');
 const { ROLES, MODULES } = require('./constants');
-const { attachUser, requireLogin, requireRole, loadAuthorizedEvent, isAdmin, isManager } = require('./middleware/auth');
+const {
+  attachUser,
+  requireLogin,
+  requireRole,
+  loadAuthorizedEvent,
+  isAdmin,
+  isManager,
+  canViewEventFile,
+  canDownloadEventFile,
+  canDeleteEventFile,
+} = require('./middleware/auth');
 const { csrf } = require('./middleware/csrf');
 const { audit } = require('./utils/audit');
 const { sendMail } = require('./utils/email');
@@ -54,6 +64,19 @@ function parseBody(schema, body) {
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   return parsed.data;
 }
+
+app.get('/branding/logo', async (req, res) => {
+  const attachmentId = app.locals.settings.logo_attachment_id;
+  if (!attachmentId) return res.status(404).end();
+  const file = (await db.query(
+    'select * from attachments where id=$1 and event_id is null and deleted_at is null',
+    [attachmentId],
+  )).rows[0];
+  if (!file || !String(file.mime_type).startsWith('image/')) return res.status(404).end();
+  res.setHeader('Cache-Control', 'no-store');
+  res.type(file.mime_type);
+  fs.createReadStream(resolveAttachment(file)).pipe(res);
+});
 
 app.get('/', (req, res) => res.redirect(req.user ? '/dashboard' : '/login'));
 app.get('/login', (req, res) => res.send(authPage(req, 'login')));
@@ -226,9 +249,20 @@ app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent
     <form method="post" action="/events/${req.event.id}/ticketera/decision" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Decisión<select name="decision"><option>APROBADO</option><option>OBSERVADO</option></select></label><label class="span">Comentario<textarea name="comment"></textarea></label><button>Registrar decisión</button></form>
     ${table(['Decisión','Comentario','Usuario','Fecha'], approvals.rows.map((a)=>`<tr><td>${esc(a.decision)}</td><td>${esc(a.comment)}</td><td>${esc(a.first_name)} ${esc(a.last_name)}</td><td>${esc(a.created_at)}</td></tr>`))}`;
   }
-  const attachmentCards = files.rows.map((f) => `<article class="file-card"><b>${esc(f.original_name)}</b><small>${Math.round(f.size_bytes/1024)} KB · ${esc(f.mime_type)}</small><div><a href="/files/${f.id}/view" target="_blank">Ver</a><a href="/files/${f.id}/download">Descargar</a></div><form method="post" action="/files/${f.id}/delete"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Eliminar</button></form></article>`).join('');
+  const attachmentCards = files.rows.map((f) => {
+    const actions = [];
+    if (canViewEventFile(req.user)) actions.push(`<a href="/files/${f.id}/view" target="_blank">Ver</a>`);
+    if (canDownloadEventFile(req.user)) actions.push(`<a href="/files/${f.id}/download">Descargar</a>`);
+    const deleteForm = canDeleteEventFile(req.user, req.event)
+      ? `<form method="post" action="/files/${f.id}/delete"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Eliminar</button></form>`
+      : '';
+    return `<article class="file-card"><b>${esc(f.original_name)}</b><small>${Math.round(f.size_bytes/1024)} KB · ${esc(f.mime_type)}</small>${actions.length ? `<div>${actions.join('')}</div>` : '<small>Archivo cargado</small>'}${deleteForm}</article>`;
+  }).join('');
   const history = statusHistory.rows.map((h)=>`<li><b>${esc(h.new_status)}</b> ${esc(h.observation)} <small>${esc(h.created_at)}</small></li>`).join('');
-  res.send(layout(req, req.event.name, `${eventHeader(req.event, key)}<div class="module-actions"><a href="/events/${req.event.id}/modules/${key}/pdf">Descargar PDF</a>${isAdmin(req.user)?`<a href="/events/${req.event.id}/zip">Descargar Todo</a>`:''}</div>${content}<section class="files">${attachmentCards}</section><section class="panel"><h2>Historial</h2><ul class="history">${history || '<li>Sin movimientos.</li>'}</ul></section>`));
+  const downloads = isAdmin(req.user)
+    ? `<div class="module-actions"><a href="/events/${req.event.id}/modules/${key}/pdf">Descargar PDF</a><a href="/events/${req.event.id}/zip">Descargar Todo</a></div>`
+    : '';
+  res.send(layout(req, req.event.name, `${eventHeader(req.event, key)}${downloads}${content}<section class="files">${attachmentCards}</section><section class="panel"><h2>Historial</h2><ul class="history">${history || '<li>Sin movimientos.</li>'}</ul></section>`));
 });
 
 app.post('/events/:eventId/modules/identificacion/company', requireLogin, loadAuthorizedEvent, async (req, res) => {
@@ -336,7 +370,7 @@ app.post('/events/:eventId/review/:moduleKey', requireLogin, loadAuthorizedEvent
   res.redirect(`/events/${req.event.id}/modules/aceptacion`);
 });
 
-app.get('/events/:eventId/modules/:moduleKey/pdf', requireLogin, loadAuthorizedEvent, async (req, res) => {
+app.get('/events/:eventId/modules/:moduleKey/pdf', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN), async (req, res) => {
   const buffer = await modulePdf(req.event, req.params.moduleKey, app.locals.settings);
   res.setHeader('Content-Disposition', `attachment; filename="${req.params.moduleKey}.pdf"`);
   res.type('application/pdf').send(buffer);
@@ -355,6 +389,8 @@ app.get('/files/:id/:mode(view|download)', requireLogin, async (req, res) => {
     req.params.eventId = file.event_id;
     await new Promise((resolve) => loadAuthorizedEvent(req, res, resolve));
     if (!req.event) return;
+    if (req.params.mode === 'download' && !canDownloadEventFile(req.user)) return res.status(403).send('Acceso denegado');
+    if (req.params.mode === 'view' && !canViewEventFile(req.user)) return res.status(403).send('Acceso denegado');
   } else if (!isAdmin(req.user)) return res.status(403).send('Acceso denegado');
   const target = resolveAttachment(file);
   res.setHeader('Content-Disposition', `${req.params.mode === 'download' ? 'attachment' : 'inline'}; filename="${file.original_name}"`);
@@ -369,6 +405,7 @@ app.post('/files/:id/delete', requireLogin, async (req, res) => {
     req.params.eventId = file.event_id;
     await new Promise((resolve) => loadAuthorizedEvent(req, res, resolve));
     if (!req.event) return;
+    if (!canDeleteEventFile(req.user, req.event)) return res.status(403).send('Acceso denegado');
   } else if (!isAdmin(req.user)) return res.status(403).send('Acceso denegado');
   await db.query('update attachments set deleted_at=now() where id=$1', [file.id]);
   await audit(req.user.id, 'eliminar_archivo', 'attachments', file.id, { event_id: file.event_id, module: file.module_key });

@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { MODULES, ROLES } = require('../src/constants');
 const { hashToken } = require('../src/utils/security');
+const { canViewEventFile, canDownloadEventFile, canDeleteEventFile } = require('../src/middleware/auth');
 const { workbookTemplateBuffer, parseStaff } = require('../src/services/excel');
 const fs = require('fs');
 const os = require('os');
@@ -23,6 +24,22 @@ test('reset token hashing is deterministic and not plaintext', () => {
   const token = 'abc123';
   assert.equal(hashToken(token), hashToken(token));
   assert.notEqual(hashToken(token), token);
+});
+
+test('event file permissions separate producer, manager and admin access', () => {
+  const event = { owner_user_id: 'producer-id' };
+  const admin = { id: 'admin-id', roles: [ROLES.ADMIN] };
+  const producer = { id: 'producer-id', roles: [ROLES.PRODUCER] };
+  const manager = { id: 'manager-id', roles: [ROLES.MANAGER] };
+
+  assert.equal(canViewEventFile(admin), true);
+  assert.equal(canViewEventFile(manager), true);
+  assert.equal(canViewEventFile(producer), false);
+  assert.equal(canDownloadEventFile(admin), true);
+  assert.equal(canDownloadEventFile(manager), false);
+  assert.equal(canDownloadEventFile(producer), false);
+  assert.equal(canDeleteEventFile(producer, event), true);
+  assert.equal(canDeleteEventFile(manager, event), false);
 });
 
 test('staff template can be parsed and validates required fields', async () => {
