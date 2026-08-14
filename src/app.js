@@ -255,20 +255,15 @@ app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent
     <section class="panel"><h2>Cortesías, promociones, imágenes y legales</h2><form method="post" enctype="multipart/form-data" action="/events/${req.event.id}/modules/comercial/items?_csrf=${req.csrfToken}" class="upload-form inline-grid"><input name="category" value="Imagen/Legal Ticketera"><input name="observation" placeholder="Observación"><input type="file" name="file" required><button>Adjuntar</button><progress hidden max="100"></progress></form></section>`;
     if (!canEdit) content = `<section class="readonly-details"><div><small>Ticketera</small><b>${esc(ticketing.ticketing_name || 'Sin completar')}</b></div><div><small>Contacto</small><b>${esc(ticketing.contact || 'Sin completar')}</b></div><div><small>Observaciones</small><b>${esc(ticketing.observations || 'Sin observaciones')}</b></div></section><section class="dossier-section"><h2>Sectores</h2>${table(['Nombre','Capacidad','Precio','Observación'], sectors.rows.map((s)=>`<tr><td>${esc(s.name)}</td><td>${esc(s.capacity)}</td><td>${esc(s.price)}</td><td>${esc(s.observation)}</td></tr>`))}</section><section class="dossier-section"><h2>Fases de venta</h2>${table(['Nombre','Desde','Hasta'], phases.rows.map((p)=>`<tr><td>${esc(p.name)}</td><td>${esc(p.date_from)}</td><td>${esc(p.date_to)}</td></tr>`))}</section>`;
   } else if (key === 'aceptacion') {
-    const rows = MODULES.filter((m) => m.key !== 'aceptacion').map((m) => `<tr><td>${esc(m.name)}</td><td>${esc(req.event.module_statuses[m.key] || 'PENDIENTE')}</td><td><form method="post" action="/events/${req.event.id}/review/${m.key}"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="status"><option>APROBADO</option><option>OBSERVADO</option><option>PENDIENTE</option></select><input name="observation" placeholder="Observación"><button>Guardar revisión</button></form></td></tr>`);
-    content = `<section class="panel"><h2>Aceptación de Contenido</h2>${table(['Módulo','Estado','Revisión'], rows)}</section>`;
-    if (!canReviewEventContent(req.user)) {
-      const statusRows = MODULES.filter((m) => m.key !== 'aceptacion').map((m) => `<tr><td>${esc(m.name)}</td><td><span class="badge">${esc(req.event.module_statuses[m.key] || 'PENDIENTE')}</span></td></tr>`);
-      content = `<section><div class="section-heading"><h2>Estado de los módulos</h2><span>Vista de solo lectura</span></div>${table(['Módulo','Estado'], statusRows)}</section>`;
-    }
+    const statusRows = MODULES.filter((m) => m.key !== 'aceptacion').map((m) => `<tr><td>${esc(m.name)}</td><td><span class="badge">${esc(req.event.module_statuses[m.key] || 'PENDIENTE')}</span></td><td><a href="/events/${req.event.id}/modules/${m.key}">Ver módulo</a></td></tr>`);
+    content = `<section><div class="section-heading"><h2>Resumen de revisiones</h2><span>Las decisiones se registran dentro de cada módulo</span></div>${table(['Módulo','Estado','Detalle'], statusRows)}</section>`;
   } else if (key === 'ticketera') {
     const ticketing = (await db.query('select * from ticketing where event_id=$1', [req.event.id])).rows[0] || {};
     const approvals = await db.query('select a.*, u.first_name, u.last_name from ticketing_approvals a left join users u on u.id=a.created_by where event_id=$1 order by created_at desc', [req.event.id]);
     content = `<form method="post" action="/events/${req.event.id}/modules/ticketera/link" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Nombre de Ticketera<input name="ticketing_name" value="${esc(ticketing.ticketing_name)}"></label><label>URL/link de venta<input name="sales_url" value="${esc(ticketing.sales_url)}"></label><label>Fecha<input type="date" name="sales_date" value="${esc(ticketing.sales_date)}"></label><label class="span">Observaciones<textarea name="sales_observations">${esc(ticketing.sales_observations)}</textarea></label><button class="primary span">Guardar link</button></form>
     ${ticketing.sales_url ? `<a class="primary" target="_blank" href="${esc(ticketing.sales_url)}">Abrir evento en Ticketera</a>` : ''}
-    <form method="post" action="/events/${req.event.id}/ticketera/decision" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Decisión<select name="decision"><option>APROBADO</option><option>OBSERVADO</option></select></label><label class="span">Comentario<textarea name="comment"></textarea></label><button>Registrar decisión</button></form>
     ${table(['Decisión','Comentario','Usuario','Fecha'], approvals.rows.map((a)=>`<tr><td>${esc(a.decision)}</td><td>${esc(a.comment)}</td><td>${esc(a.first_name)} ${esc(a.last_name)}</td><td>${esc(a.created_at)}</td></tr>`))}`;
-    if (!isManager(req.user)) content = `<section class="readonly-details"><div><small>Ticketera</small><b>${esc(ticketing.ticketing_name || 'Sin completar')}</b></div><div><small>Link de venta</small><b>${ticketing.sales_url ? `<a target="_blank" href="${esc(ticketing.sales_url)}">Abrir enlace</a>` : 'Sin completar'}</b></div><div><small>Fecha</small><b>${esc(ticketing.sales_date || 'Sin completar')}</b></div><div><small>Observaciones</small><b>${esc(ticketing.sales_observations || 'Sin observaciones')}</b></div></section>${isAdmin(req.user) ? `<form method="post" action="/events/${req.event.id}/ticketera/decision" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Decisión<select name="decision"><option>APROBADO</option><option>OBSERVADO</option></select></label><label class="span">Comentario<textarea name="comment"></textarea></label><button>Registrar decisión</button></form>` : ''}${table(['Decisión','Comentario','Usuario','Fecha'], approvals.rows.map((a)=>`<tr><td>${esc(a.decision)}</td><td>${esc(a.comment)}</td><td>${esc(a.first_name)} ${esc(a.last_name)}</td><td>${esc(a.created_at)}</td></tr>`))}`;
+    if (!isManager(req.user)) content = `<section class="readonly-details"><div><small>Ticketera</small><b>${esc(ticketing.ticketing_name || 'Sin completar')}</b></div><div><small>Link de venta</small><b>${ticketing.sales_url ? `<a target="_blank" href="${esc(ticketing.sales_url)}">Abrir enlace</a>` : 'Sin completar'}</b></div><div><small>Fecha</small><b>${esc(ticketing.sales_date || 'Sin completar')}</b></div><div><small>Observaciones</small><b>${esc(ticketing.sales_observations || 'Sin observaciones')}</b></div></section>${table(['Decisión','Comentario','Usuario','Fecha'], approvals.rows.map((a)=>`<tr><td>${esc(a.decision)}</td><td>${esc(a.comment)}</td><td>${esc(a.first_name)} ${esc(a.last_name)}</td><td>${esc(a.created_at)}</td></tr>`))}`;
   }
   const attachmentCards = files.rows.map((f) => {
     const actions = [];
@@ -283,7 +278,11 @@ app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent
   const downloads = isAdmin(req.user)
     ? `<div class="module-actions"><a href="/events/${req.event.id}/modules/${key}/pdf">Descargar PDF</a><a href="/events/${req.event.id}/zip">Descargar Todo</a></div>`
     : '';
-  res.send(layout(req, req.event.name, `${eventHeader(req.event, key)}${downloads}${content}<section class="files">${attachmentCards}</section><section class="panel"><h2>Historial</h2><ul class="history">${history || '<li>Sin movimientos.</li>'}</ul></section>`));
+  const currentStatus = req.event.module_statuses[key] || 'PENDIENTE';
+  const reviewPanel = canReviewEventContent(req.user) && key !== 'aceptacion'
+    ? `<section class="panel review-panel"><div><small>Control administrativo</small><h2>Revisión del módulo</h2><p>Estado actual: <span class="badge">${esc(currentStatus)}</span></p></div><form method="post" action="/events/${req.event.id}/review/${key}" class="form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Decisión<select name="status"><option>APROBADO</option><option>OBSERVADO</option><option>PENDIENTE</option></select></label><label class="span">Comentario<textarea name="observation" placeholder="Detalle de la aprobación u observación"></textarea></label><button class="primary span">Guardar revisión</button></form></section>`
+    : '';
+  res.send(layout(req, req.event.name, `${eventHeader(req.event, key)}${downloads}${content}<section class="files">${attachmentCards}</section><section class="panel"><h2>Historial</h2><ul class="history">${history || '<li>Sin movimientos.</li>'}</ul></section>${reviewPanel}`));
 });
 
 app.post('/events/:eventId/modules/identificacion/company', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
@@ -382,7 +381,8 @@ app.post('/events/:eventId/ticketera/decision', requireLogin, loadAuthorizedEven
 });
 
 app.post('/events/:eventId/review/:moduleKey', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN, ROLES.MANAGER), async (req, res) => {
-  if (req.body.status === 'OBSERVADO' && !req.body.observation) { flash(req, 'error', 'La observación es obligatoria.'); return res.redirect(`/events/${req.event.id}/modules/aceptacion`); }
+  if (!['APROBADO','OBSERVADO','PENDIENTE'].includes(req.body.status)) return res.status(400).send('Estado invalido');
+  if (req.body.status === 'OBSERVADO' && !req.body.observation) { flash(req, 'error', 'La observación es obligatoria.'); return res.redirect(`/events/${req.event.id}/modules/${req.params.moduleKey}`); }
   const previous = (await db.query('select status from event_modules where event_id=$1 and module_key=$2', [req.event.id, req.params.moduleKey])).rows[0]?.status;
   await db.tx(async (client) => {
     await client.query('update event_modules set status=$3, updated_at=now() where event_id=$1 and module_key=$2', [req.event.id, req.params.moduleKey, req.body.status]);
@@ -390,7 +390,8 @@ app.post('/events/:eventId/review/:moduleKey', requireLogin, loadAuthorizedEvent
   });
   await audit(req.user.id, 'revision_modulo', 'events', req.event.id, { module: req.params.moduleKey, status: req.body.status });
   await notifyEventOwner(req.event.id, 'REVISION_MODULO', `Revision de ${req.event.name}`, reviewNotificationMessage(req.params.moduleKey, req.body.status, req.body.observation), `/events/${req.event.id}/modules/${req.params.moduleKey}`);
-  res.redirect(`/events/${req.event.id}/modules/aceptacion`);
+  flash(req, 'ok', 'Revision guardada y productor notificado.');
+  res.redirect(`/events/${req.event.id}/modules/${req.params.moduleKey}`);
 });
 
 app.get('/events/:eventId/modules/:moduleKey/pdf', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN), async (req, res) => {
@@ -596,7 +597,7 @@ app.post('/admin/events/:id/manager', requireLogin, requireRole(ROLES.ADMIN), as
 
 app.get('/admin/reviews', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   const mods = await db.query(`select m.*, e.name event_name from event_modules m join events e on e.id=m.event_id where m.status in ('CARGADO','OBSERVADO') order by m.updated_at desc`);
-  res.send(layout(req, 'Revisiones', `<h1>Revisiones</h1>${table(['Evento','Módulo','Estado','Acción'], mods.rows.map((m)=>`<tr><td>${esc(m.event_name)}</td><td>${esc(m.module_name)}</td><td>${esc(m.status)}</td><td><a href="/events/${m.event_id}/modules/aceptacion">Revisar</a></td></tr>`))}`));
+  res.send(layout(req, 'Revisiones', `<h1>Revisiones</h1>${table(['Evento','Módulo','Estado','Acción'], mods.rows.map((m)=>`<tr><td>${esc(m.event_name)}</td><td>${esc(m.module_name)}</td><td>${esc(m.status)}</td><td><a href="/events/${m.event_id}/modules/${m.module_key}">Revisar módulo</a></td></tr>`))}`));
 });
 
 app.get('/admin/settings', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {

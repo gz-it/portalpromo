@@ -103,6 +103,10 @@ progress { width: 100%; grid-column: 1 / -1; }
 .completion-overview strong { font-size: 28px; line-height: 1.1; }
 .completion-overview span { color: var(--muted); }
 .history { margin: 0; padding-left: 18px; }
+.review-panel { margin-top: 18px; display: grid; grid-template-columns: minmax(190px, .7fr) minmax(300px, 1.3fr); gap: 24px; border-top: 4px solid var(--primary); }
+.review-panel h2 { margin: 5px 0 10px; }
+.review-panel p { color: var(--muted); }
+.review-panel small { color: var(--primary); font-weight: 800; text-transform: uppercase; }
 .empty { color: var(--muted); }
 @media (max-width: 760px) {
   .auth { grid-template-columns: 1fr; align-content: start; padding-top: 20px; }
@@ -126,6 +130,7 @@ progress { width: 100%; grid-column: 1 / -1; }
   .section-heading { align-items: flex-start; flex-direction: column; gap: 4px; }
   .notification-item { align-items: stretch; flex-direction: column; }
   .notification-item button { width: 100%; }
+  .review-panel { grid-template-columns: 1fr; }
 }
 @media (max-width: 480px) {
   .detail-band { grid-template-columns: 1fr; }
