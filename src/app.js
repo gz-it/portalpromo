@@ -292,7 +292,8 @@ app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent
   const producerReviewStatus = canEdit && key !== 'aceptacion'
     ? `<section class="producer-review-status ${currentStatus.toLowerCase()}"><div><small>Estado de revisión</small><h2>${esc(producerStatusLabels[currentStatus] || currentStatus)}</h2><p>${latestReview?.new_status === currentStatus && latestReview.observation ? esc(latestReview.observation) : currentStatus === 'CARGADO' ? 'La documentación está disponible para control administrativo.' : 'Todavía no hay comentarios del administrador.'}</p></div><span class="badge">${esc(currentStatus)}</span></section>`
     : '';
-  res.send(layout(req, req.event.name, `${eventHeader(req.event, key)}${downloads}${content}<section class="files">${attachmentCards}</section><section class="panel"><h2>Historial</h2><ul class="history">${history || '<li>Sin movimientos.</li>'}</ul></section>${reviewPanel}${producerReviewStatus}`));
+  const historySection = canEdit ? '' : `<section class="panel"><h2>Historial</h2><ul class="history">${history || '<li>Sin movimientos.</li>'}</ul></section>`;
+  res.send(layout(req, req.event.name, `${eventHeader(req.event, key)}${downloads}${content}<section class="files">${attachmentCards}</section>${historySection}${reviewPanel}${producerReviewStatus}`));
 });
 
 app.post('/events/:eventId/modules/identificacion/company', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
