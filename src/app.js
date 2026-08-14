@@ -32,6 +32,7 @@ const { esc, layout, authPage, eventHeader, table, optionList } = require('./ui'
 const { loadSettings, setSetting } = require('./services/settings');
 const { initModules, loadModuleStatuses, markLoaded } = require('./services/events');
 const { notifyEventOwner, reviewNotificationMessage } = require('./services/notifications');
+const { buildEventChecklist, summarizeChecklist } = require('./services/checklist');
 const { upload, saveAttachment, resolveAttachment } = require('./services/storage');
 const { workbookTemplateBuffer, parseStaff } = require('./services/excel');
 const { modulePdf } = require('./services/pdf');
@@ -77,6 +78,16 @@ function parseBody(schema, body) {
   const parsed = schema.safeParse(body);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   return parsed.data;
+}
+
+function renderChecklist(eventId, items, title) {
+  const summary = summarizeChecklist(items);
+  const stateLabels = { complete: 'Completo', missing: 'Falta', warning: 'Atención' };
+  const rows = items.map((item) => {
+    const moduleLabel = MODULES.find((module) => module.key === item.moduleKey)?.name || item.moduleKey;
+    return `<a class="checklist-item ${item.state}" href="/events/${eventId}/modules/${item.moduleKey}"><span class="check-state">${stateLabels[item.state]}</span><div><b>${esc(item.label)}</b><small>${esc(moduleLabel)}${item.detail ? ` · ${esc(item.detail)}` : ''}</small></div></a>`;
+  }).join('');
+  return `<section class="dossier-section checklist-section"><div class="section-heading"><div><h2>${esc(title)}</h2><span>${summary.complete}/${summary.total} requisitos completos · ${summary.missing} faltantes${summary.warnings ? ` · ${summary.warnings} alertas` : ''}</span></div><strong>${summary.percentage}%</strong></div><progress max="100" value="${summary.percentage}">${summary.percentage}%</progress><div class="checklist-list">${rows}</div></section>`;
 }
 
 app.get('/branding/logo', async (req, res) => {
@@ -293,7 +304,13 @@ app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent
     ? `<section class="producer-review-status ${currentStatus.toLowerCase()}"><div><small>Estado de revisión</small><h2>${esc(producerStatusLabels[currentStatus] || currentStatus)}</h2><p>${latestReview?.new_status === currentStatus && latestReview.observation ? esc(latestReview.observation) : currentStatus === 'CARGADO' ? 'La documentación está disponible para control administrativo.' : 'Todavía no hay comentarios del administrador.'}</p></div><span class="badge">${esc(currentStatus)}</span></section>`
     : '';
   const historySection = canEdit ? '' : `<section class="panel"><h2>Historial</h2><ul class="history">${history || '<li>Sin movimientos.</li>'}</ul></section>`;
-  res.send(layout(req, req.event.name, `${eventHeader(req.event, key)}${downloads}${content}<section class="files">${attachmentCards}</section>${historySection}${reviewPanel}${producerReviewStatus}`));
+  const producerChecklist = canEdit
+    ? await buildEventChecklist(req.event.id)
+    : null;
+  const moduleChecklist = producerChecklist
+    ? renderChecklist(req.event.id, key === 'aceptacion' ? producerChecklist.items : producerChecklist.items.filter((item) => item.moduleKey === key), key === 'aceptacion' ? 'Checklist general' : 'Qué falta en este módulo')
+    : '';
+  res.send(layout(req, req.event.name, `${eventHeader(req.event, key)}${downloads}${moduleChecklist}${content}<section class="files">${attachmentCards}</section>${historySection}${reviewPanel}${producerReviewStatus}`));
 });
 
 app.post('/events/:eventId/modules/identificacion/company', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
@@ -600,6 +617,7 @@ app.get('/admin/events/:id', requireLogin, requireRole(ROLES.ADMIN), async (req,
   ]);
 
   const companyData = company.rows[0] || {};
+  const checklist = await buildEventChecklist(event.id);
   const ticketingData = ticketing.rows[0] || {};
   const moduleOrder = new Map(MODULES.map((module) => [module.key, module.order]));
   const modules = moduleRows.rows.sort((a, b) => moduleOrder.get(a.module_key) - moduleOrder.get(b.module_key));
@@ -630,6 +648,7 @@ app.get('/admin/events/:id', requireLogin, requireRole(ROLES.ADMIN), async (req,
     <section class="completion-overview"><div><small>Estado de carga</small><strong>${completion.completed}% completado</strong><span>${completion.missing}% de datos faltantes · ${activeModules} de 10 módulos con información</span></div><progress max="100" value="${completion.completed}">${completion.completed}%</progress></section>
     <section class="summary-strip"><div><strong>${activeModules}/10</strong><span>Módulos con actividad</span></div><div><strong>${approvedModules}</strong><span>Aprobados</span></div><div><strong>${observedModules}</strong><span>Observados</span></div><div><strong>${fileRows.rowCount}</strong><span>Archivos</span></div><div><strong>${staff.rows[0].count}</strong><span>Personas</span></div></section>
     ${identity}
+    ${renderChecklist(event.id, checklist.items, 'Checklist documental')}
     <section class="dossier-section"><div class="section-heading"><h2>Avance por módulo</h2><span>${activeModules} de 10 con información</span></div>${moduleTable}</section>
     <section class="dossier-section"><div class="section-heading"><h2>Archivos cargados</h2><span>${fileRows.rowCount} documentos</span></div>${fileTable}</section>
   `));

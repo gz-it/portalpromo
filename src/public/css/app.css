@@ -124,6 +124,17 @@ progress { width: 100%; grid-column: 1 / -1; }
 .producer-review-status h2 { margin: 5px 0; font-size: 22px; }
 .producer-review-status p { margin: 0; color: var(--muted); }
 .producer-review-status small { font-weight: 800; text-transform: uppercase; }
+.checklist-section > progress { height: 10px; margin-bottom: 12px; accent-color: var(--primary); }
+.checklist-section .section-heading > strong { font-size: 26px; }
+.checklist-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--line); }
+.checklist-item { min-width: 0; display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 10px; padding: 12px 8px; color: var(--ink); border-bottom: 1px solid var(--line); }
+.checklist-item:nth-child(odd) { border-right: 1px solid var(--line); }
+.checklist-item div { min-width: 0; display: grid; gap: 3px; }
+.checklist-item small { color: var(--muted); overflow-wrap: anywhere; }
+.check-state { width: max-content; height: max-content; padding: 3px 7px; border-radius: 4px; background: #eef3f8; color: var(--muted); font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.checklist-item.complete .check-state { background: #dcfae6; color: var(--ok); }
+.checklist-item.missing .check-state { background: #fef3f2; color: var(--danger); }
+.checklist-item.warning .check-state { background: #fffaeb; color: var(--warn); }
 .empty { color: var(--muted); }
 @media (max-width: 760px) {
   .auth { grid-template-columns: 1fr; align-content: start; padding-top: 20px; }
@@ -151,6 +162,8 @@ progress { width: 100%; grid-column: 1 / -1; }
   .notification-item button { width: 100%; }
   .review-panel { grid-template-columns: 1fr; }
   .producer-review-status { align-items: flex-start; flex-direction: column; }
+  .checklist-list { grid-template-columns: 1fr; }
+  .checklist-item:nth-child(odd) { border-right: 0; }
 }
 @media (max-width: 480px) {
   .detail-band { grid-template-columns: 1fr; }
