@@ -9,6 +9,7 @@
     "migrate": "node scripts/migrate.js",
     "seed:admin": "node scripts/seed-admin.js",
     "seed:demo": "node scripts/seed-demo-users.js",
+    "seed:demo-events": "node scripts/seed-demo-events.js",
     "test": "node --test",
     "backup": "node scripts/backup.js",
     "update": "node scripts/update.js"

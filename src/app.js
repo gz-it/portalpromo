@@ -25,6 +25,7 @@ const { csrf } = require('./middleware/csrf');
 const { audit } = require('./utils/audit');
 const { sendMail } = require('./utils/email');
 const { hashPassword, verifyPassword, makeToken, hashToken } = require('./utils/security');
+const { moduleCompletion } = require('./utils/completion');
 const { esc, layout, authPage, eventHeader, table, optionList } = require('./ui');
 const { loadSettings, setSetting } = require('./services/settings');
 const { initModules, loadModuleStatuses, markLoaded } = require('./services/events');
@@ -461,14 +462,17 @@ app.get('/admin/events', requireLogin, requireRole(ROLES.ADMIN), async (req, res
     order by coalesce(max(a.created_at),e.created_at) desc`);
   const managers = await db.query(`select u.id, u.first_name || ' ' || u.last_name name from users u join user_roles ur on ur.user_id=u.id join roles r on r.id=ur.role_id where r.name='GERENCIADORA' and u.status='ACTIVO' order by name`);
   const managerOptions = managers.rows.map((m)=>`<option value="${m.id}">${esc(m.name)}</option>`).join('');
-  const rows = events.rows.map((event) => `<tr>
+  const rows = events.rows.map((event) => {
+    const completion = moduleCompletion(event.active_modules);
+    return `<tr>
     <td><b>${esc(event.name)}</b><br><small>${esc(event.artist)} · ${esc(event.venue)}</small></td>
     <td>${esc(event.producer)}</td>
-    <td><b>${event.active_modules}/10</b><br><small>${event.file_count} archivos</small></td>
+    <td><div class="table-progress"><div><b>${completion.completed}% completado</b><small>${completion.missing}% faltante</small></div><progress max="100" value="${completion.completed}">${completion.completed}%</progress><small>${event.active_modules}/10 módulos · ${event.file_count} archivos</small></div></td>
     <td>${event.last_upload ? esc(new Date(event.last_upload).toLocaleString('es-AR')) : 'Sin cargas'}</td>
     <td><a class="button" href="/admin/events/${event.id}">Ver expediente</a></td>
     <td>${managerOptions ? `<form method="post" action="/admin/events/${event.id}/manager"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="manager_id">${managerOptions}</select><button>Asignar</button></form>` : '<small>Sin gerenciadoras activas</small>'}</td>
-  </tr>`);
+  </tr>`;
+  });
   res.send(layout(req, 'Eventos', `<section class="toolbar"><div><h1>Eventos</h1><p>Seguimiento de documentación y avance por productor.</p></div></section>${table(['Evento','Productor','Avance','Última carga','Expediente','Gerenciadora'], rows)}`));
 });
 
@@ -509,6 +513,7 @@ app.get('/admin/events/:id', requireLogin, requireRole(ROLES.ADMIN), async (req,
   const moduleOrder = new Map(MODULES.map((module) => [module.key, module.order]));
   const modules = moduleRows.rows.sort((a, b) => moduleOrder.get(a.module_key) - moduleOrder.get(b.module_key));
   const activeModules = modules.filter((module) => module.status !== 'PENDIENTE').length;
+  const completion = moduleCompletion(activeModules);
   const approvedModules = modules.filter((module) => module.status === 'APROBADO').length;
   const observedModules = modules.filter((module) => module.status === 'OBSERVADO').length;
   const dateList = dates.rows.map((row) => new Date(row.show_date).toLocaleDateString('es-AR', { timeZone: 'UTC' })).join(', ') || 'Sin fecha';
@@ -531,6 +536,7 @@ app.get('/admin/events/:id', requireLogin, requireRole(ROLES.ADMIN), async (req,
 
   res.send(layout(req, `Expediente ${event.name}`, `
     <section class="dossier-head"><a href="/admin/events">← Eventos</a><div class="toolbar"><div><h1>${esc(event.name)}</h1><p>${esc(event.artist)} · ${esc(event.venue)}, ${esc(event.city)} · ${esc(dateList)}</p></div><a class="primary" href="/events/${event.id}/zip">Descargar ZIP</a></div></section>
+    <section class="completion-overview"><div><small>Estado de carga</small><strong>${completion.completed}% completado</strong><span>${completion.missing}% de datos faltantes · ${activeModules} de 10 módulos con información</span></div><progress max="100" value="${completion.completed}">${completion.completed}%</progress></section>
     <section class="summary-strip"><div><strong>${activeModules}/10</strong><span>Módulos con actividad</span></div><div><strong>${approvedModules}</strong><span>Aprobados</span></div><div><strong>${observedModules}</strong><span>Observados</span></div><div><strong>${fileRows.rowCount}</strong><span>Archivos</span></div><div><strong>${staff.rows[0].count}</strong><span>Personas</span></div></section>
     ${identity}
     <section class="dossier-section"><div class="section-heading"><h2>Avance por módulo</h2><span>${activeModules} de 10 con información</span></div>${moduleTable}</section>
