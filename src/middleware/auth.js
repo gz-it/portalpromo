@@ -53,6 +53,10 @@ function canEditEventContent(user, event) {
   return user?.roles?.includes(ROLES.PRODUCER) && event?.owner_user_id === user?.id;
 }
 
+function canReviewEventContent(user) {
+  return isAdmin(user) || isManager(user);
+}
+
 function canDeleteEventFile(user, event) {
   return canEditEventContent(user, event);
 }
@@ -90,5 +94,6 @@ module.exports = {
   canViewEventFile,
   canDownloadEventFile,
   canEditEventContent,
+  canReviewEventContent,
   canDeleteEventFile,
 };

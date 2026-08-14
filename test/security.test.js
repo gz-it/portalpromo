@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { MODULES, ROLES } = require('../src/constants');
 const { hashToken } = require('../src/utils/security');
-const { canViewEventFile, canDownloadEventFile, canEditEventContent, canDeleteEventFile } = require('../src/middleware/auth');
+const { canViewEventFile, canDownloadEventFile, canEditEventContent, canReviewEventContent, canDeleteEventFile } = require('../src/middleware/auth');
 const { workbookTemplateBuffer, parseStaff } = require('../src/services/excel');
 const fs = require('fs');
 const os = require('os');
@@ -41,6 +41,9 @@ test('event file permissions separate producer, manager and admin access', () =>
   assert.equal(canEditEventContent(admin, event), false);
   assert.equal(canEditEventContent(manager, event), false);
   assert.equal(canEditEventContent(producer, event), true);
+  assert.equal(canReviewEventContent(admin), true);
+  assert.equal(canReviewEventContent(manager), true);
+  assert.equal(canReviewEventContent(producer), false);
   assert.equal(canDeleteEventFile(admin, event), false);
   assert.equal(canDeleteEventFile(producer, event), true);
   assert.equal(canDeleteEventFile(manager, event), false);

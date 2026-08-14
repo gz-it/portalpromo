@@ -20,6 +20,7 @@ const {
   canViewEventFile,
   canDownloadEventFile,
   canEditEventContent,
+  canReviewEventContent,
   canDeleteEventFile,
 } = require('./middleware/auth');
 const { csrf } = require('./middleware/csrf');
@@ -245,7 +246,7 @@ app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent
   } else if (key === 'aceptacion') {
     const rows = MODULES.filter((m) => m.key !== 'aceptacion').map((m) => `<tr><td>${esc(m.name)}</td><td>${esc(req.event.module_statuses[m.key] || 'PENDIENTE')}</td><td><form method="post" action="/events/${req.event.id}/review/${m.key}"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="status"><option>APROBADO</option><option>OBSERVADO</option><option>PENDIENTE</option></select><input name="observation" placeholder="Observación"><button>Guardar revisión</button></form></td></tr>`);
     content = `<section class="panel"><h2>Aceptación de Contenido</h2>${table(['Módulo','Estado','Revisión'], rows)}</section>`;
-    if (!isManager(req.user)) {
+    if (!canReviewEventContent(req.user)) {
       const statusRows = MODULES.filter((m) => m.key !== 'aceptacion').map((m) => `<tr><td>${esc(m.name)}</td><td><span class="badge">${esc(req.event.module_statuses[m.key] || 'PENDIENTE')}</span></td></tr>`);
       content = `<section><div class="section-heading"><h2>Estado de los módulos</h2><span>Vista de solo lectura</span></div>${table(['Módulo','Estado'], statusRows)}</section>`;
     }
@@ -256,7 +257,7 @@ app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent
     ${ticketing.sales_url ? `<a class="primary" target="_blank" href="${esc(ticketing.sales_url)}">Abrir evento en Ticketera</a>` : ''}
     <form method="post" action="/events/${req.event.id}/ticketera/decision" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Decisión<select name="decision"><option>APROBADO</option><option>OBSERVADO</option></select></label><label class="span">Comentario<textarea name="comment"></textarea></label><button>Registrar decisión</button></form>
     ${table(['Decisión','Comentario','Usuario','Fecha'], approvals.rows.map((a)=>`<tr><td>${esc(a.decision)}</td><td>${esc(a.comment)}</td><td>${esc(a.first_name)} ${esc(a.last_name)}</td><td>${esc(a.created_at)}</td></tr>`))}`;
-    if (!isManager(req.user)) content = `<section class="readonly-details"><div><small>Ticketera</small><b>${esc(ticketing.ticketing_name || 'Sin completar')}</b></div><div><small>Link de venta</small><b>${ticketing.sales_url ? `<a target="_blank" href="${esc(ticketing.sales_url)}">Abrir enlace</a>` : 'Sin completar'}</b></div><div><small>Fecha</small><b>${esc(ticketing.sales_date || 'Sin completar')}</b></div><div><small>Observaciones</small><b>${esc(ticketing.sales_observations || 'Sin observaciones')}</b></div></section>${table(['Decisión','Comentario','Usuario','Fecha'], approvals.rows.map((a)=>`<tr><td>${esc(a.decision)}</td><td>${esc(a.comment)}</td><td>${esc(a.first_name)} ${esc(a.last_name)}</td><td>${esc(a.created_at)}</td></tr>`))}`;
+    if (!isManager(req.user)) content = `<section class="readonly-details"><div><small>Ticketera</small><b>${esc(ticketing.ticketing_name || 'Sin completar')}</b></div><div><small>Link de venta</small><b>${ticketing.sales_url ? `<a target="_blank" href="${esc(ticketing.sales_url)}">Abrir enlace</a>` : 'Sin completar'}</b></div><div><small>Fecha</small><b>${esc(ticketing.sales_date || 'Sin completar')}</b></div><div><small>Observaciones</small><b>${esc(ticketing.sales_observations || 'Sin observaciones')}</b></div></section>${isAdmin(req.user) ? `<form method="post" action="/events/${req.event.id}/ticketera/decision" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Decisión<select name="decision"><option>APROBADO</option><option>OBSERVADO</option></select></label><label class="span">Comentario<textarea name="comment"></textarea></label><button>Registrar decisión</button></form>` : ''}${table(['Decisión','Comentario','Usuario','Fecha'], approvals.rows.map((a)=>`<tr><td>${esc(a.decision)}</td><td>${esc(a.comment)}</td><td>${esc(a.first_name)} ${esc(a.last_name)}</td><td>${esc(a.created_at)}</td></tr>`))}`;
   }
   const attachmentCards = files.rows.map((f) => {
     const actions = [];
@@ -361,14 +362,14 @@ app.post('/events/:eventId/modules/ticketera/link', requireLogin, loadAuthorized
   res.redirect(`/events/${req.event.id}/modules/ticketera`);
 });
 
-app.post('/events/:eventId/ticketera/decision', requireLogin, loadAuthorizedEvent, requireRole(ROLES.MANAGER), async (req, res) => {
+app.post('/events/:eventId/ticketera/decision', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN, ROLES.MANAGER), async (req, res) => {
   if (req.body.decision === 'OBSERVADO' && !req.body.comment) { flash(req, 'error', 'El comentario es obligatorio al observar.'); return res.redirect(`/events/${req.event.id}/modules/ticketera`); }
   await db.query('insert into ticketing_approvals (event_id,decision,comment,created_by) values ($1,$2,$3,$4)', [req.event.id, req.body.decision, req.body.comment, req.user.id]);
   await audit(req.user.id, 'decision_ticketera', 'events', req.event.id, { decision: req.body.decision });
   res.redirect(`/events/${req.event.id}/modules/ticketera`);
 });
 
-app.post('/events/:eventId/review/:moduleKey', requireLogin, loadAuthorizedEvent, requireRole(ROLES.MANAGER), async (req, res) => {
+app.post('/events/:eventId/review/:moduleKey', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN, ROLES.MANAGER), async (req, res) => {
   if (req.body.status === 'OBSERVADO' && !req.body.observation) { flash(req, 'error', 'La observación es obligatoria.'); return res.redirect(`/events/${req.event.id}/modules/aceptacion`); }
   const previous = (await db.query('select status from event_modules where event_id=$1 and module_key=$2', [req.event.id, req.params.moduleKey])).rows[0]?.status;
   await db.tx(async (client) => {
@@ -565,7 +566,7 @@ app.post('/admin/events/:id/manager', requireLogin, requireRole(ROLES.ADMIN), as
 
 app.get('/admin/reviews', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   const mods = await db.query(`select m.*, e.name event_name from event_modules m join events e on e.id=m.event_id where m.status in ('CARGADO','OBSERVADO') order by m.updated_at desc`);
-  res.send(layout(req, 'Revisiones', `<h1>Seguimiento de revisiones</h1>${table(['Evento','Módulo','Estado','Acción'], mods.rows.map((m)=>`<tr><td>${esc(m.event_name)}</td><td>${esc(m.module_name)}</td><td>${esc(m.status)}</td><td><a href="/events/${m.event_id}/modules/aceptacion">Ver estado</a></td></tr>`))}`));
+  res.send(layout(req, 'Revisiones', `<h1>Revisiones</h1>${table(['Evento','Módulo','Estado','Acción'], mods.rows.map((m)=>`<tr><td>${esc(m.event_name)}</td><td>${esc(m.module_name)}</td><td>${esc(m.status)}</td><td><a href="/events/${m.event_id}/modules/aceptacion">Revisar</a></td></tr>`))}`));
 });
 
 app.get('/admin/settings', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
