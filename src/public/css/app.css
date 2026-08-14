@@ -24,6 +24,9 @@ button:hover, .button:hover, .primary:hover { filter: brightness(.96); }
 .brand-mark, .auth-mark { width: 40px; height: 40px; border-radius: 8px; background: var(--primary); color: white; display: grid; place-items: center; font-weight: 900; }
 .top-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
 .top-actions form { margin: 0; }
+.user-name { color: var(--muted); font-weight: 700; }
+.settings-stack { display: grid; gap: 16px; }
+.settings-stack h2 { margin: 0; }
 .notification-link { display: inline-flex; align-items: center; gap: 6px; }
 .notification-link span { min-width: 21px; height: 21px; padding: 0 6px; display: inline-grid; place-items: center; border-radius: 999px; background: var(--danger); color: white; font-size: 12px; font-weight: 800; }
 .page { width: min(1180px, calc(100% - 28px)); margin: 24px auto 56px; }
