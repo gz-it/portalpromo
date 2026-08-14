@@ -63,6 +63,16 @@ th, td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: l
 th { background: #eef3f8; font-size: 13px; }
 .admin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px,1fr)); gap: 14px; margin-bottom: 14px; }
 .admin-tile { color: var(--ink); min-height: 100px; display: flex; align-items: center; }
+.dashboard-head { align-items: flex-end; }
+.dashboard-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.dashboard-columns { display: grid; grid-template-columns: minmax(0, 2fr) minmax(250px, .8fr); gap: 20px; align-items: start; margin: 24px 0; }
+.dashboard-columns > div, .dashboard-columns aside { min-width: 0; }
+.attention-list { display: grid; border-top: 1px solid var(--line); }
+.attention-item { display: grid; gap: 4px; padding: 13px 4px; color: var(--ink); border-bottom: 1px solid var(--line); }
+.attention-item .badge { margin-bottom: 2px; }
+.attention-item.observado { border-left: 4px solid var(--warn); padding-left: 10px; }
+.attention-item.cargado { border-left: 4px solid #8da8c1; padding-left: 10px; }
+.attention-item small { color: var(--muted); }
 .dossier-head { margin-bottom: 16px; }
 .dossier-head .toolbar { margin-top: 8px; }
 .summary-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: 18px; overflow: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
@@ -120,6 +130,8 @@ progress { width: 100%; grid-column: 1 / -1; }
   .topbar { align-items: flex-start; }
   .top-actions { font-size: 14px; }
   .toolbar { align-items: stretch; flex-direction: column; }
+  .dashboard-actions { justify-content: flex-start; }
+  .dashboard-columns { grid-template-columns: 1fr; }
   .form-grid { grid-template-columns: 1fr; }
   .page { width: min(100% - 20px, 1180px); margin-top: 14px; }
   table, thead, tbody, tr, td { display: block; min-width: 0; }

@@ -475,8 +475,47 @@ app.post('/profile', requireLogin, async (req, res) => {
 });
 
 app.get('/admin', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
-  const counts = await db.query(`select (select count(*) from users) users, (select count(*) from events) events`);
-  res.send(layout(req, 'Administracion', `<section class="admin-grid">${['Productores:/admin/users','Eventos:/admin/events','Revisiones:/admin/reviews','Configuración:/admin/settings'].map((x)=>{const[l,h]=x.split(':'); return `<a class="panel admin-tile" href="${h}"><b>${l}</b></a>`}).join('')}</section><p class="panel">Usuarios: ${counts.rows[0].users} · Eventos: ${counts.rows[0].events}</p>`));
+  const [counts, events, attention, activity] = await Promise.all([
+    db.query(`select
+      (select count(*) from events) events,
+      (select count(distinct u.id) from users u join user_roles ur on ur.user_id=u.id join roles r on r.id=ur.role_id where r.name='PRODUCTOR' and u.status='ACTIVO') producers,
+      (select count(*) from attachments where event_id is not null and deleted_at is null) files,
+      (select count(*) from event_modules where status in ('CARGADO','OBSERVADO')) pending_reviews,
+      (select count(*) from event_modules where status='OBSERVADO') observed`),
+    db.query(`select e.id,e.name,e.artist,e.venue,u.first_name || ' ' || u.last_name producer,
+      count(distinct m.module_key) filter (where m.status <> 'PENDIENTE') active_modules,
+      count(distinct a.id) filter (where a.deleted_at is null) file_count,
+      max(a.created_at) filter (where a.deleted_at is null) last_upload
+      from events e join users u on u.id=e.owner_user_id
+      left join event_modules m on m.event_id=e.id left join attachments a on a.event_id=e.id
+      group by e.id,u.id order by coalesce(max(a.created_at),e.created_at) desc limit 8`),
+    db.query(`select m.module_key,m.module_name,m.status,m.updated_at,e.id event_id,e.name event_name
+      from event_modules m join events e on e.id=m.event_id
+      where m.status in ('OBSERVADO','CARGADO')
+      order by case when m.status='OBSERVADO' then 0 else 1 end,m.updated_at desc limit 8`),
+    db.query(`select a.original_name,a.module_key,a.created_at,e.id event_id,e.name event_name,
+      u.first_name || ' ' || u.last_name producer
+      from attachments a join events e on e.id=a.event_id join users u on u.id=a.uploaded_by
+      where a.deleted_at is null order by a.created_at desc limit 8`),
+  ]);
+
+  const metrics = counts.rows[0];
+  const eventRows = events.rows.map((event) => {
+    const completion = moduleCompletion(event.active_modules);
+    return `<tr><td><b>${esc(event.name)}</b><br><small>${esc(event.artist)} · ${esc(event.venue)}</small></td><td>${esc(event.producer)}</td><td><div class="table-progress"><div><b>${completion.completed}%</b><small>${completion.missing}% faltante</small></div><progress max="100" value="${completion.completed}">${completion.completed}%</progress><small>${event.active_modules}/10 módulos · ${event.file_count} archivos</small></div></td><td>${event.last_upload ? esc(new Date(event.last_upload).toLocaleString('es-AR')) : 'Sin cargas'}</td><td><a href="/admin/events/${event.id}">Ver expediente</a></td></tr>`;
+  });
+  const attentionItems = attention.rows.map((item) => `<a class="attention-item ${item.status.toLowerCase()}" href="/events/${item.event_id}/modules/${item.module_key}"><span class="badge">${esc(item.status)}</span><b>${esc(item.event_name)}</b><small>${esc(item.module_name)} · ${esc(new Date(item.updated_at).toLocaleString('es-AR'))}</small></a>`).join('');
+  const activityRows = activity.rows.map((item) => {
+    const moduleLabel = MODULES.find((module) => module.key === item.module_key)?.name || item.module_key;
+    return `<tr><td><b>${esc(item.event_name)}</b></td><td>${esc(item.producer)}</td><td>${esc(moduleLabel)}</td><td>${esc(item.original_name)}</td><td>${esc(new Date(item.created_at).toLocaleString('es-AR'))}</td><td><a href="/admin/events/${item.event_id}">Abrir</a></td></tr>`;
+  });
+
+  res.send(layout(req, 'Panel general', `
+    <section class="toolbar dashboard-head"><div><h1>Panel general</h1><p>Estado documental y revisiones de todos los eventos.</p></div><div class="dashboard-actions"><a class="button" href="/admin/users">Productores</a><a class="button" href="/admin/events">Todos los eventos</a><a class="button" href="/admin/settings">Configuración</a></div></section>
+    <section class="summary-strip dashboard-summary"><div><strong>${metrics.events}</strong><span>Eventos</span></div><div><strong>${metrics.producers}</strong><span>Productores activos</span></div><div><strong>${metrics.pending_reviews}</strong><span>Revisiones pendientes</span></div><div><strong>${metrics.files}</strong><span>Archivos cargados</span></div><div><strong>${req.user.unread_notifications}</strong><span>Notificaciones nuevas</span></div></section>
+    <section class="dashboard-columns"><div><div class="section-heading"><h2>Estado de eventos</h2><a href="/admin/events">Ver todos</a></div>${table(['Evento','Productor','Avance','Última carga','Acción'], eventRows)}</div><aside><div class="section-heading"><h2>Requieren atención</h2><a href="/admin/reviews">Ver revisiones</a></div><div class="attention-list">${attentionItems || '<p class="empty">No hay módulos pendientes.</p>'}</div></aside></section>
+    <section class="dossier-section"><div class="section-heading"><h2>Actividad reciente</h2><span>Últimos archivos recibidos</span></div>${table(['Evento','Productor','Módulo','Archivo','Fecha','Acción'], activityRows)}</section>
+  `));
 });
 
 app.get('/admin/users', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
