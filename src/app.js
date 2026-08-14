@@ -310,7 +310,8 @@ app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent
   const moduleChecklist = producerChecklist
     ? renderChecklist(req.event.id, key === 'aceptacion' ? producerChecklist.items : producerChecklist.items.filter((item) => item.moduleKey === key), key === 'aceptacion' ? 'Checklist general' : 'Qué falta en este módulo')
     : '';
-  res.send(layout(req, req.event.name, `${eventHeader(req.event, key)}${downloads}${moduleChecklist}${content}<section class="files">${attachmentCards}</section>${historySection}${reviewPanel}${producerReviewStatus}`));
+  const headerOptions = isAdmin(req.user) ? { backHref:`/admin/events/${req.event.id}`, backLabel:'Resumen del expediente', overviewHref:`/admin/events/${req.event.id}` } : {};
+  res.send(layout(req, req.event.name, `${eventHeader(req.event, key, headerOptions)}${downloads}${moduleChecklist}${content}<section class="files">${attachmentCards}</section>${historySection}${reviewPanel}${producerReviewStatus}`));
 });
 
 app.post('/events/:eventId/modules/identificacion/company', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
@@ -621,36 +622,36 @@ app.get('/admin/events/:id', requireLogin, requireRole(ROLES.ADMIN), async (req,
   const ticketingData = ticketing.rows[0] || {};
   const moduleOrder = new Map(MODULES.map((module) => [module.key, module.order]));
   const modules = moduleRows.rows.sort((a, b) => moduleOrder.get(a.module_key) - moduleOrder.get(b.module_key));
+  event.module_statuses = Object.fromEntries(modules.map((module) => [module.module_key, module.status]));
   const activeModules = modules.filter((module) => module.status !== 'PENDIENTE').length;
   const completion = moduleCompletion(activeModules);
   const approvedModules = modules.filter((module) => module.status === 'APROBADO').length;
   const observedModules = modules.filter((module) => module.status === 'OBSERVADO').length;
   const dateList = dates.rows.map((row) => new Date(row.show_date).toLocaleDateString('es-AR', { timeZone: 'UTC' })).join(', ') || 'Sin fecha';
 
-  const moduleTable = table(
-    ['Módulo','Estado','Archivos','Última carga','Acción'],
-    modules.map((module) => `<tr><td><b>${esc(module.module_name)}</b></td><td><span class="badge">${esc(module.status)}</span></td><td>${module.file_count}</td><td>${module.last_upload ? esc(new Date(module.last_upload).toLocaleString('es-AR')) : 'Sin cargas'}</td><td><a href="/events/${event.id}/modules/${module.module_key}">Ver detalle</a></td></tr>`),
-  );
-
   const fileTable = table(
     ['Módulo','Información','Archivo','Cargado por','Fecha','Acciones'],
-    fileRows.rows.map((file) => {
+    fileRows.rows.slice(0, 6).map((file) => {
       const moduleName = MODULES.find((module) => module.key === file.module_key)?.name || file.module_key;
       const details = [file.entry_title, file.reference_detail, file.entry_observation].filter(Boolean).join(' · ');
       return `<tr><td>${esc(moduleName)}</td><td>${esc(details || 'Documento adjunto')}</td><td><b>${esc(file.original_name)}</b><br><small>${Math.round(file.size_bytes / 1024)} KB · ${esc(file.mime_type)}</small></td><td>${esc(file.username)}</td><td>${esc(new Date(file.created_at).toLocaleString('es-AR'))}</td><td><div class="row-actions"><a href="/files/${file.id}/view" target="_blank">Ver</a><a href="/files/${file.id}/download">Descargar</a></div></td></tr>`;
     }),
   );
 
+  const pendingChecklist = checklist.items.filter((item) => item.state !== 'complete');
+  const pendingRequirements = pendingChecklist.length
+    ? `<section class="dossier-section compact-checklist"><div class="section-heading"><h2>Datos por completar</h2><span>${pendingChecklist.length} requisitos pendientes</span></div><div class="checklist-list">${pendingChecklist.map((item) => `<a class="checklist-item ${item.state}" href="/events/${event.id}/modules/${item.moduleKey}"><span class="check-state">${item.state === 'warning' ? 'Revisar' : 'Falta'}</span><div><b>${esc(item.label)}</b><small>${esc(item.detail)}</small></div></a>`).join('')}</div></section>`
+    : '<section class="readonly-notice"><b>Documentación completa</b><span>No quedan datos pendientes para revisar.</span></section>';
+
   const identity = `<section class="detail-band"><div><small>Productor</small><b>${esc(event.producer)}</b><span>${esc(event.producer_email)}${event.producer_phone ? ` · ${esc(event.producer_phone)}` : ''}</span></div><div><small>Empresa</small><b>${esc(companyData.legal_name || 'Sin completar')}</b><span>${esc(companyData.cuit || '')}</span></div><div><small>Responsable</small><b>${esc(companyData.responsible || 'Sin completar')}</b><span>${esc(companyData.email || '')}</span></div><div><small>Ticketera</small><b>${esc(ticketingData.ticketing_name || 'Sin completar')}</b><span>${esc(ticketingData.contact || '')}</span></div></section>`;
 
   res.send(layout(req, `Expediente ${event.name}`, `
-    <section class="dossier-head"><a href="/admin/events">← Eventos</a><div class="toolbar"><div><h1>${esc(event.name)}</h1><p>${esc(event.artist)} · ${esc(event.venue)}, ${esc(event.city)} · ${esc(dateList)}</p></div><a class="primary" href="/events/${event.id}/zip">Descargar ZIP</a></div></section>
-    <section class="completion-overview"><div><small>Estado de carga</small><strong>${completion.completed}% completado</strong><span>${completion.missing}% de datos faltantes · ${activeModules} de 10 módulos con información</span></div><progress max="100" value="${completion.completed}">${completion.completed}%</progress></section>
-    <section class="summary-strip"><div><strong>${activeModules}/10</strong><span>Módulos con actividad</span></div><div><strong>${approvedModules}</strong><span>Aprobados</span></div><div><strong>${observedModules}</strong><span>Observados</span></div><div><strong>${fileRows.rowCount}</strong><span>Archivos</span></div><div><strong>${staff.rows[0].count}</strong><span>Personas</span></div></section>
+    ${eventHeader(event, null, { backHref: '/admin/events', backLabel: 'Eventos', overviewHref: `/admin/events/${event.id}` })}
+    <section class="overview-actions"><span>${esc(event.venue)}, ${esc(event.city)} · ${esc(dateList)}</span><a class="primary" href="/events/${event.id}/zip">Descargar ZIP</a></section>
+    <section class="overview-status"><div class="overview-progress"><small>Avance documental</small><div><strong>${completion.completed}%</strong><span>${completion.missing}% faltante</span></div><progress max="100" value="${completion.completed}">${completion.completed}%</progress></div><div class="overview-facts"><div><strong>${approvedModules}</strong><span>Aprobados</span></div><div><strong>${observedModules}</strong><span>Observados</span></div><div><strong>${fileRows.rowCount}</strong><span>Archivos</span></div><div><strong>${staff.rows[0].count}</strong><span>Personas</span></div></div></section>
     ${identity}
-    ${renderChecklist(event.id, checklist.items, 'Checklist documental')}
-    <section class="dossier-section"><div class="section-heading"><h2>Avance por módulo</h2><span>${activeModules} de 10 con información</span></div>${moduleTable}</section>
-    <section class="dossier-section"><div class="section-heading"><h2>Archivos cargados</h2><span>${fileRows.rowCount} documentos</span></div>${fileTable}</section>
+    ${pendingRequirements}
+    <section class="dossier-section"><div class="section-heading"><h2>Últimos archivos</h2><span>Mostrando ${Math.min(fileRows.rowCount, 6)} de ${fileRows.rowCount}</span></div>${fileTable}</section>
   `));
 });
 

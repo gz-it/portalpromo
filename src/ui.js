@@ -74,14 +74,15 @@ function authPage(req, mode = 'login') {
   </section>`, { narrow: true });
 }
 
-function eventHeader(event, activeKey) {
+function eventHeader(event, activeKey, options = {}) {
+  const overview = options.overviewHref ? `<a class="module-pill ${activeKey ? '' : 'active'}" href="${options.overviewHref}"><span>•</span><b>Resumen</b><small>EXPEDIENTE</small></a>` : '';
   const pills = MODULES.map((m) => {
     const status = event.module_statuses?.[m.key] || 'PENDIENTE';
     const icon = status === 'APROBADO' ? '✓' : status === 'OBSERVADO' ? '!' : status === 'CARGADO' ? '●' : '○';
     return `<a class="module-pill ${activeKey === m.key ? 'active' : ''} ${status.toLowerCase()}" href="/events/${event.id}/modules/${m.key}">
       <span>${icon}</span><b>${esc(m.name)}</b><small>${esc(status)}</small></a>`;
   }).join('');
-  return `<section class="event-head"><a href="/dashboard">← Mis eventos</a><h1>${esc(event.name)}</h1><p>${esc(event.artist)} · ${esc(event.venue)} · ${esc(event.city)}</p></section><nav class="module-bar">${pills}</nav>`;
+  return `<section class="event-head"><a href="${options.backHref || '/dashboard'}">← ${esc(options.backLabel || 'Mis eventos')}</a><h1>${esc(event.name)}</h1><p>${esc(event.artist)} · ${esc(event.venue)} · ${esc(event.city)}</p></section><nav class="module-bar">${overview}${pills}</nav>`;
 }
 
 function table(headers, rows) {

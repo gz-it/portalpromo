@@ -78,6 +78,19 @@ th { background: #eef3f8; font-size: 13px; }
 .attention-item small { color: var(--muted); }
 .dossier-head { margin-bottom: 16px; }
 .dossier-head .toolbar { margin-top: 8px; }
+.overview-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 2px 0 14px; }
+.overview-actions > span { color: var(--muted); }
+.overview-status { display: grid; grid-template-columns: minmax(260px, 1.15fr) minmax(420px, 1.85fr); align-items: stretch; margin-bottom: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.overview-progress { display: grid; gap: 8px; padding: 16px 18px; background: #eef7f3; }
+.overview-progress > small { color: var(--primary); font-weight: 800; text-transform: uppercase; }
+.overview-progress > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.overview-progress strong { font-size: 30px; line-height: 1; }
+.overview-progress span { color: var(--muted); }
+.overview-progress progress { height: 9px; accent-color: var(--primary); }
+.overview-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.overview-facts div { min-width: 0; display: grid; align-content: center; gap: 4px; padding: 16px; border-left: 1px solid var(--line); }
+.overview-facts strong { font-size: 24px; line-height: 1; }
+.overview-facts span { color: var(--muted); font-size: 13px; }
 .summary-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: 18px; overflow: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
 .summary-strip div { min-width: 0; padding: 16px; border-right: 1px solid var(--line); display: grid; gap: 4px; }
 .summary-strip div:last-child { border-right: 0; }
@@ -154,6 +167,10 @@ progress { width: 100%; grid-column: 1 / -1; }
   td { border: 0; padding: 7px 8px; }
   td form { display: grid; gap: 8px; }
   .module-pill { min-width: 146px; }
+  .overview-actions { align-items: stretch; flex-direction: column; }
+  .overview-actions .primary { width: 100%; }
+  .overview-status { grid-template-columns: 1fr; }
+  .overview-facts div:first-child { border-left: 0; }
   .completion-overview { grid-template-columns: 1fr; gap: 12px; }
   .summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .summary-strip div { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -169,5 +186,8 @@ progress { width: 100%; grid-column: 1 / -1; }
   .checklist-item:nth-child(odd) { border-right: 0; }
 }
 @media (max-width: 480px) {
+  .overview-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .overview-facts div:nth-child(3) { border-left: 0; border-top: 1px solid var(--line); }
+  .overview-facts div:nth-child(4) { border-top: 1px solid var(--line); }
   .detail-band { grid-template-columns: 1fr; }
 }
