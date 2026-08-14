@@ -279,10 +279,20 @@ app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent
     ? `<div class="module-actions"><a href="/events/${req.event.id}/modules/${key}/pdf">Descargar PDF</a><a href="/events/${req.event.id}/zip">Descargar Todo</a></div>`
     : '';
   const currentStatus = req.event.module_statuses[key] || 'PENDIENTE';
+  const latestReview = statusHistory.rows.find((entry) => entry.new_status !== 'CARGADO');
+  const producerStatusLabels = {
+    APROBADO: 'Aprobado por administración',
+    OBSERVADO: 'Observado por administración',
+    CARGADO: 'Enviado para revisión',
+    PENDIENTE: 'Pendiente',
+  };
   const reviewPanel = canReviewEventContent(req.user) && key !== 'aceptacion'
     ? `<section class="panel review-panel"><div><small>Control administrativo</small><h2>Revisión del módulo</h2><p>Estado actual: <span class="badge">${esc(currentStatus)}</span></p></div><form method="post" action="/events/${req.event.id}/review/${key}" class="form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Decisión<select name="status"><option>APROBADO</option><option>OBSERVADO</option><option>PENDIENTE</option></select></label><label class="span">Comentario<textarea name="observation" placeholder="Detalle de la aprobación u observación"></textarea></label><button class="primary span">Guardar revisión</button></form></section>`
     : '';
-  res.send(layout(req, req.event.name, `${eventHeader(req.event, key)}${downloads}${content}<section class="files">${attachmentCards}</section><section class="panel"><h2>Historial</h2><ul class="history">${history || '<li>Sin movimientos.</li>'}</ul></section>${reviewPanel}`));
+  const producerReviewStatus = canEdit && key !== 'aceptacion'
+    ? `<section class="producer-review-status ${currentStatus.toLowerCase()}"><div><small>Estado de revisión</small><h2>${esc(producerStatusLabels[currentStatus] || currentStatus)}</h2><p>${latestReview?.new_status === currentStatus && latestReview.observation ? esc(latestReview.observation) : currentStatus === 'CARGADO' ? 'La documentación está disponible para control administrativo.' : 'Todavía no hay comentarios del administrador.'}</p></div><span class="badge">${esc(currentStatus)}</span></section>`
+    : '';
+  res.send(layout(req, req.event.name, `${eventHeader(req.event, key)}${downloads}${content}<section class="files">${attachmentCards}</section><section class="panel"><h2>Historial</h2><ul class="history">${history || '<li>Sin movimientos.</li>'}</ul></section>${reviewPanel}${producerReviewStatus}`));
 });
 
 app.post('/events/:eventId/modules/identificacion/company', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
