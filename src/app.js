@@ -448,10 +448,94 @@ app.post('/admin/users/:id/role', requireLogin, requireRole(ROLES.ADMIN), async 
 });
 
 app.get('/admin/events', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
-  const events = await db.query(`select e.*, u.first_name || ' ' || u.last_name producer from events e join users u on u.id=e.owner_user_id order by e.created_at desc`);
+  const events = await db.query(`
+    select e.*, u.first_name || ' ' || u.last_name producer,
+      count(distinct a.id) filter (where a.deleted_at is null) file_count,
+      count(distinct m.module_key) filter (where m.status <> 'PENDIENTE') active_modules,
+      max(a.created_at) filter (where a.deleted_at is null) last_upload
+    from events e
+    join users u on u.id=e.owner_user_id
+    left join event_modules m on m.event_id=e.id
+    left join attachments a on a.event_id=e.id
+    group by e.id,u.id
+    order by coalesce(max(a.created_at),e.created_at) desc`);
   const managers = await db.query(`select u.id, u.first_name || ' ' || u.last_name name from users u join user_roles ur on ur.user_id=u.id join roles r on r.id=ur.role_id where r.name='GERENCIADORA' and u.status='ACTIVO' order by name`);
   const managerOptions = managers.rows.map((m)=>`<option value="${m.id}">${esc(m.name)}</option>`).join('');
-  res.send(layout(req, 'Eventos', `<h1>Eventos</h1>${table(['Evento','Artista','Productor','Lugar','Estado','Accion','Gerenciadora'], events.rows.map((e)=>`<tr><td>${esc(e.name)}</td><td>${esc(e.artist)}</td><td>${esc(e.producer)}</td><td>${esc(e.venue)}</td><td>${esc(e.status)}</td><td><a href="/events/${e.id}">Abrir</a></td><td>${managerOptions ? `<form method="post" action="/admin/events/${e.id}/manager"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="manager_id">${managerOptions}</select><button>Asignar</button></form>` : '<small>Sin gerenciadoras activas</small>'}</td></tr>`))}`));
+  const rows = events.rows.map((event) => `<tr>
+    <td><b>${esc(event.name)}</b><br><small>${esc(event.artist)} · ${esc(event.venue)}</small></td>
+    <td>${esc(event.producer)}</td>
+    <td><b>${event.active_modules}/10</b><br><small>${event.file_count} archivos</small></td>
+    <td>${event.last_upload ? esc(new Date(event.last_upload).toLocaleString('es-AR')) : 'Sin cargas'}</td>
+    <td><a class="button" href="/admin/events/${event.id}">Ver expediente</a></td>
+    <td>${managerOptions ? `<form method="post" action="/admin/events/${event.id}/manager"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="manager_id">${managerOptions}</select><button>Asignar</button></form>` : '<small>Sin gerenciadoras activas</small>'}</td>
+  </tr>`);
+  res.send(layout(req, 'Eventos', `<section class="toolbar"><div><h1>Eventos</h1><p>Seguimiento de documentación y avance por productor.</p></div></section>${table(['Evento','Productor','Avance','Última carga','Expediente','Gerenciadora'], rows)}`));
+});
+
+app.get('/admin/events/:id', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+  const event = (await db.query(`
+    select e.*, u.first_name || ' ' || u.last_name producer,
+      u.email producer_email,u.phone producer_phone
+    from events e join users u on u.id=e.owner_user_id where e.id=$1`, [req.params.id])).rows[0];
+  if (!event) return res.status(404).send('Evento no encontrado');
+
+  const [dates, company, moduleRows, fileRows, staff, ticketing] = await Promise.all([
+    db.query('select show_date from event_dates where event_id=$1 order by show_date', [event.id]),
+    db.query('select * from event_companies where event_id=$1', [event.id]),
+    db.query(`select m.*,count(a.id) filter (where a.deleted_at is null) file_count,
+      max(a.created_at) filter (where a.deleted_at is null) last_upload
+      from event_modules m left join attachments a on a.event_id=m.event_id and a.module_key=m.module_key
+      where m.event_id=$1 group by m.event_id,m.module_key order by m.module_name`, [event.id]),
+    db.query(`select a.*,u.username,
+      coalesce(i.type,p.type,svc.category,asset.category,tech.category,sp.brand,ca.title) entry_title,
+      coalesce(i.valid_until::text,p.reference_number,svc.provider,sp.agreement_type) reference_detail,
+      coalesce(i.observation,p.observation,svc.observation,asset.observation,tech.observation,sp.observation) entry_observation
+      from attachments a
+      left join users u on u.id=a.uploaded_by
+      left join insurances i on i.attachment_id=a.id
+      left join permits p on p.attachment_id=a.id
+      left join mandatory_services svc on svc.attachment_id=a.id
+      left join assets asset on asset.attachment_id=a.id
+      left join technical_documents tech on tech.attachment_id=a.id
+      left join sponsors sp on sp.attachment_id=a.id
+      left join club_agreements ca on ca.attachment_id=a.id
+      where a.event_id=$1 and a.deleted_at is null order by a.created_at desc`, [event.id]),
+    db.query('select count(*) count from event_staff where event_id=$1', [event.id]),
+    db.query('select * from ticketing where event_id=$1', [event.id]),
+  ]);
+
+  const companyData = company.rows[0] || {};
+  const ticketingData = ticketing.rows[0] || {};
+  const moduleOrder = new Map(MODULES.map((module) => [module.key, module.order]));
+  const modules = moduleRows.rows.sort((a, b) => moduleOrder.get(a.module_key) - moduleOrder.get(b.module_key));
+  const activeModules = modules.filter((module) => module.status !== 'PENDIENTE').length;
+  const approvedModules = modules.filter((module) => module.status === 'APROBADO').length;
+  const observedModules = modules.filter((module) => module.status === 'OBSERVADO').length;
+  const dateList = dates.rows.map((row) => new Date(row.show_date).toLocaleDateString('es-AR', { timeZone: 'UTC' })).join(', ') || 'Sin fecha';
+
+  const moduleTable = table(
+    ['Módulo','Estado','Archivos','Última carga','Acción'],
+    modules.map((module) => `<tr><td><b>${esc(module.module_name)}</b></td><td><span class="badge">${esc(module.status)}</span></td><td>${module.file_count}</td><td>${module.last_upload ? esc(new Date(module.last_upload).toLocaleString('es-AR')) : 'Sin cargas'}</td><td><a href="/events/${event.id}/modules/${module.module_key}">Abrir módulo</a></td></tr>`),
+  );
+
+  const fileTable = table(
+    ['Módulo','Información','Archivo','Cargado por','Fecha','Acciones'],
+    fileRows.rows.map((file) => {
+      const moduleName = MODULES.find((module) => module.key === file.module_key)?.name || file.module_key;
+      const details = [file.entry_title, file.reference_detail, file.entry_observation].filter(Boolean).join(' · ');
+      return `<tr><td>${esc(moduleName)}</td><td>${esc(details || 'Documento adjunto')}</td><td><b>${esc(file.original_name)}</b><br><small>${Math.round(file.size_bytes / 1024)} KB · ${esc(file.mime_type)}</small></td><td>${esc(file.username)}</td><td>${esc(new Date(file.created_at).toLocaleString('es-AR'))}</td><td><div class="row-actions"><a href="/files/${file.id}/view" target="_blank">Ver</a><a href="/files/${file.id}/download">Descargar</a></div></td></tr>`;
+    }),
+  );
+
+  const identity = `<section class="detail-band"><div><small>Productor</small><b>${esc(event.producer)}</b><span>${esc(event.producer_email)}${event.producer_phone ? ` · ${esc(event.producer_phone)}` : ''}</span></div><div><small>Empresa</small><b>${esc(companyData.legal_name || 'Sin completar')}</b><span>${esc(companyData.cuit || '')}</span></div><div><small>Responsable</small><b>${esc(companyData.responsible || 'Sin completar')}</b><span>${esc(companyData.email || '')}</span></div><div><small>Ticketera</small><b>${esc(ticketingData.ticketing_name || 'Sin completar')}</b><span>${esc(ticketingData.contact || '')}</span></div></section>`;
+
+  res.send(layout(req, `Expediente ${event.name}`, `
+    <section class="dossier-head"><a href="/admin/events">← Eventos</a><div class="toolbar"><div><h1>${esc(event.name)}</h1><p>${esc(event.artist)} · ${esc(event.venue)}, ${esc(event.city)} · ${esc(dateList)}</p></div><a class="primary" href="/events/${event.id}/zip">Descargar ZIP</a></div></section>
+    <section class="summary-strip"><div><strong>${activeModules}/10</strong><span>Módulos con actividad</span></div><div><strong>${approvedModules}</strong><span>Aprobados</span></div><div><strong>${observedModules}</strong><span>Observados</span></div><div><strong>${fileRows.rowCount}</strong><span>Archivos</span></div><div><strong>${staff.rows[0].count}</strong><span>Personas</span></div></section>
+    ${identity}
+    <section class="dossier-section"><div class="section-heading"><h2>Avance por módulo</h2><span>${activeModules} de 10 con información</span></div>${moduleTable}</section>
+    <section class="dossier-section"><div class="section-heading"><h2>Archivos cargados</h2><span>${fileRows.rowCount} documentos</span></div>${fileTable}</section>
+  `));
 });
 
 app.post('/admin/events/:id/manager', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
