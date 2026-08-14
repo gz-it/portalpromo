@@ -102,6 +102,12 @@ sudo certbot --nginx -d portal-prueba.example.com
 
 Para migrar de prueba a producción, cambiar DNS y variables `.env` (`APP_URL`, `DATABASE_URL`, rutas y SMTP) sin modificar código.
 
+### Prueba gratuita en Render
+
+El repositorio incluye `render.yaml` para crear el servicio web y PostgreSQL desde un Blueprint. En Render, elegir **New > Blueprint**, conectar el repositorio y completar `INITIAL_ADMIN_EMAIL`, `INITIAL_ADMIN_USERNAME` e `INITIAL_ADMIN_PASSWORD` (mínimo 12 caracteres).
+
+El plan gratuito es solo para evaluación: la aplicación entra en reposo por inactividad, la base expira a los 30 días y el almacenamiento local de archivos no persiste entre reinicios o despliegues. Para producción se debe usar un disco persistente o almacenamiento S3 compatible.
+
 ## Nginx y HTTPS
 
 La configuración de ejemplo incluye:

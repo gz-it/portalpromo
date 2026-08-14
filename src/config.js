@@ -11,7 +11,7 @@ const bool = (value, fallback = false) => {
 const config = {
   env: process.env.NODE_ENV || 'development',
   port: int(process.env.PORT, 3000),
-  appUrl: process.env.APP_URL || 'http://localhost:3000',
+  appUrl: process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000',
   databaseUrl: process.env.DATABASE_URL,
   sessionSecret: process.env.SESSION_SECRET || 'dev-only-change-me',
   sessionSecure: bool(process.env.SESSION_SECURE, false),

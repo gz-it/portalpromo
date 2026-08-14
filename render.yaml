@@ -1,0 +1,41 @@
+services:
+  - type: web
+    name: portalpromo
+    runtime: node
+    plan: free
+    region: ohio
+    buildCommand: npm install
+    startCommand: npm run migrate && npm run seed:admin && npm start
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: portalpromo-db
+          property: connectionString
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: SESSION_SECURE
+        value: "true"
+      - key: MAX_UPLOAD_SIZE_MB
+        value: "200"
+      - key: STORAGE_PATH
+        value: ./storage/uploads
+      - key: BACKUP_PATH
+        value: ./storage/backups
+      - key: INITIAL_ADMIN_EMAIL
+        sync: false
+      - key: INITIAL_ADMIN_USERNAME
+        sync: false
+      - key: INITIAL_ADMIN_PASSWORD
+        sync: false
+      - key: INITIAL_ADMIN_FIRST_NAME
+        value: Admin
+      - key: INITIAL_ADMIN_LAST_NAME
+        value: Portal
+
+databases:
+  - name: portalpromo-db
+    plan: free
+    region: ohio
+    postgresMajorVersion: "17"
+    ipAllowList: []
