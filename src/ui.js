@@ -23,7 +23,6 @@ function layout(req, title, body, options = {}) {
       <nav class="top-actions">
         <a class="notification-link" href="/notifications">Notificaciones${user.unread_notifications ? `<span>${user.unread_notifications}</span>` : ''}</a>
         <span class="user-name">${esc(user.first_name)} ${esc(user.last_name)}</span>
-        ${user.roles.includes(ROLES.ADMIN) ? '' : '<a href="/profile">Configuración</a>'}
         ${user.roles.includes(ROLES.ADMIN) ? '<a href="/admin">Administracion</a>' : ''}
         <form method="post" action="/logout"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Salir</button></form>
       </nav>

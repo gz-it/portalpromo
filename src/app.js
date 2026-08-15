@@ -507,15 +507,6 @@ app.post('/notifications/:id/read', requireLogin, async (req, res) => {
   res.redirect(notification.link || '/notifications');
 });
 
-app.get('/profile', requireLogin, (req, res) => res.send(layout(req, 'Configuración', `<section class="toolbar"><div><h1>Configuración</h1><p>Datos de contacto y acceso a tu cuenta.</p></div></section><form method="post" action="/profile" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}">${['first_name:Nombre','last_name:Apellido','phone:Teléfono','email:Email'].map((x)=>{const[n,l]=x.split(':'); return `<label>${l}<input name="${n}" value="${esc(req.user[n])}" required></label>`}).join('')}<label class="span">Nueva contraseña<input name="password" type="password" minlength="8" placeholder="Dejar vacío para conservar la actual"></label><button class="primary span">Guardar cuenta</button></form>`)));
-
-app.post('/profile', requireLogin, async (req, res) => {
-  if (req.body.password) await db.query('update users set first_name=$1,last_name=$2,phone=$3,email=$4,password_hash=$5,updated_at=now() where id=$6', [req.body.first_name, req.body.last_name, req.body.phone, req.body.email, await hashPassword(req.body.password), req.user.id]);
-  else await db.query('update users set first_name=$1,last_name=$2,phone=$3,email=$4,updated_at=now() where id=$5', [req.body.first_name, req.body.last_name, req.body.phone, req.body.email, req.user.id]);
-  flash(req, 'ok', 'Guardado correctamente.');
-  res.redirect('/profile');
-});
-
 app.get('/admin', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   const [counts, events, attention, activity] = await Promise.all([
     db.query(`select
