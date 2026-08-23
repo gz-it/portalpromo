@@ -19,19 +19,19 @@ const demoUsers = [
     password: process.env.DEMO_PRODUCER_PASSWORD,
     role: 'PRODUCTOR',
   },
-  ...(process.env.DEMO_SYSTEMS_PASSWORD ? [{
+  {
     firstName: 'Sistemas',
     lastName: 'Demo',
     email: process.env.DEMO_SYSTEMS_EMAIL || 'sistemas@portalpromo.local',
     username: process.env.DEMO_SYSTEMS_EMAIL || 'sistemas@portalpromo.local',
     password: process.env.DEMO_SYSTEMS_PASSWORD,
     role: 'SISTEMAS',
-  }] : []),
-];
+  },
+].filter((user) => user.password);
 
 async function main() {
-  if (demoUsers.some((user) => !user.password)) {
-    throw new Error('Configure DEMO_ADMIN_PASSWORD y DEMO_PRODUCER_PASSWORD.');
+  if (!demoUsers.length) {
+    throw new Error('Configure al menos una contraseña DEMO_*_PASSWORD.');
   }
 
   await pool.query('begin');
