@@ -10,6 +10,7 @@
     "seed:admin": "node scripts/seed-admin.js",
     "seed:demo": "node scripts/seed-demo-users.js",
     "seed:demo-events": "node scripts/seed-demo-events.js",
+    "smoke:live": "node scripts/smoke-live.js",
     "test": "node --test",
     "backup": "node scripts/backup.js",
     "update": "node scripts/update.js"
