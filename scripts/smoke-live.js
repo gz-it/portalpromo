@@ -63,6 +63,9 @@ async function main() {
   let systemsHtml = await response.text();
   assert.match(systemsHtml, /Correo de notificaciones/);
   assert.match(systemsHtml, /Backup autom.tico/);
+  assert.match(systemsHtml, /Dos veces por semana/);
+  assert.match(systemsHtml, /name="email_1"/);
+  assert.match(systemsHtml, /name="email_2"/);
 
   response = await formPost('/systems/backups/run', { _csrf: csrfFrom(systemsHtml) });
   assert.equal(response.status, 302);
