@@ -24,6 +24,7 @@ function layout(req, title, body, options = {}) {
         <a class="notification-link" href="/notifications">Notificaciones${user.unread_notifications ? `<span>${user.unread_notifications}</span>` : ''}</a>
         <span class="user-name">${esc(user.first_name)} ${esc(user.last_name)}</span>
         ${user.roles.includes(ROLES.ADMIN) ? '<a href="/admin">Administracion</a>' : ''}
+        ${user.roles.includes(ROLES.SYSTEMS) ? '<a href="/systems">Sistemas</a>' : ''}
         <form method="post" action="/logout"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Salir</button></form>
       </nav>
     </header>` : '';

@@ -1,5 +1,7 @@
 const db = require('../db');
 const { MODULES, ROLES } = require('../constants');
+const config = require('../config');
+const { sendMail } = require('../utils/email');
 
 function moduleName(moduleKey) {
   return MODULES.find((module) => module.key === moduleKey)?.name || moduleKey;
@@ -28,6 +30,10 @@ async function notifyAdminsOfProducerUpdate(eventId, moduleKey, actorId) {
       `/events/${eventId}/modules/${moduleKey}`,
       ROLES.ADMIN,
     ]);
+    const recipients = await db.query(`select distinct u.email from users u join user_roles ur on ur.user_id=u.id join roles r on r.id=ur.role_id where r.name=$1 and u.status='ACTIVO'`, [ROLES.ADMIN]);
+    const subject = `Nueva carga en ${context.event_name}`;
+    const message = `${context.actor_name} actualizó ${moduleName(moduleKey)}.`;
+    await Promise.allSettled(recipients.rows.map((recipient) => sendMail(recipient.email, subject, `${message}\n\nAbrir: ${config.appUrl}/events/${eventId}/modules/${moduleKey}`)));
   } catch (error) {
     console.error('No se pudo notificar la carga:', error.message);
   }
@@ -35,10 +41,14 @@ async function notifyAdminsOfProducerUpdate(eventId, moduleKey, actorId) {
 
 async function notifyEventOwner(eventId, type, title, message, link) {
   try {
-    await db.query(`
+    const owner = (await db.query(`
       insert into notifications (user_id,event_id,type,title,message,link)
-      select owner_user_id,id,$2,$3,$4,$5 from events where id=$1`,
-    [eventId, type, title, message, link]);
+      select owner_user_id,id,$2,$3,$4,$5 from events where id=$1
+      returning user_id`, [eventId, type, title, message, link])).rows[0];
+    if (owner) {
+      const user = (await db.query('select email from users where id=$1', [owner.user_id])).rows[0];
+      if (user) await sendMail(user.email, title, `${message}\n\nAbrir: ${config.appUrl}${link}`);
+    }
   } catch (error) {
     console.error('No se pudo notificar la revision:', error.message);
   }

@@ -17,6 +17,7 @@ const {
   loadAuthorizedEvent,
   isAdmin,
   isManager,
+  isSystems,
   canViewEventFile,
   canDownloadEventFile,
   canEditEventContent,
@@ -25,7 +26,7 @@ const {
 } = require('./middleware/auth');
 const { csrf } = require('./middleware/csrf');
 const { audit } = require('./utils/audit');
-const { sendMail } = require('./utils/email');
+const { sendMail, verifyMail, getMailSettings, saveMailSettings } = require('./utils/email');
 const { hashPassword, verifyPassword, makeToken, hashToken } = require('./utils/security');
 const { esc, layout, authPage, eventHeader, table, optionList } = require('./ui');
 const { loadSettings, setSetting } = require('./services/settings');
@@ -36,6 +37,15 @@ const { upload, saveAttachment, resolveAttachment } = require('./services/storag
 const { workbookTemplateBuffer, parseStaff } = require('./services/excel');
 const { modulePdf } = require('./services/pdf');
 const { streamEventZip } = require('./services/zip');
+const {
+  backupUpload,
+  createBackup,
+  getBackupSettings,
+  registerUploadedBackup,
+  resolveBackup,
+  restoreBackup,
+  saveBackupSettings,
+} = require('./services/backups');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -206,6 +216,7 @@ app.post('/reset/:token', async (req, res) => {
 
 app.get('/dashboard', requireLogin, async (req, res) => {
   if (isAdmin(req.user)) return res.redirect('/admin');
+  if (isSystems(req.user)) return res.redirect('/systems');
   const events = isManager(req.user)
     ? await db.query(`select e.* from events e join event_manager_access a on a.event_id=e.id where a.user_id=$1 order by e.created_at desc`, [req.user.id])
     : await db.query('select * from events where owner_user_id=$1 order by created_at desc', [req.user.id]);
@@ -255,7 +266,14 @@ app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent
     aceptacion: { state: eventChecklist.review.percentage === 100 ? 'complete' : 'incomplete' },
   };
   const company = (await db.query('select * from event_companies where event_id=$1', [req.event.id])).rows[0] || {};
-  const files = await db.query('select * from attachments where event_id=$1 and module_key=$2 and deleted_at is null order by created_at desc', [req.event.id, key]);
+  const files = await db.query(`select a.*,u.first_name,u.last_name,
+    exists(select 1 from user_roles ur join roles r on r.id=ur.role_id where ur.user_id=a.uploaded_by and r.name=$3) uploaded_by_admin
+    from attachments a left join users u on u.id=a.uploaded_by
+    where a.event_id=$1 and a.module_key=$2 and a.deleted_at is null order by a.created_at desc`, [req.event.id, key, ROLES.ADMIN]);
+  const moduleEntries = await db.query(`select me.*,u.first_name,u.last_name,
+    exists(select 1 from user_roles ur join roles r on r.id=ur.role_id where ur.user_id=me.created_by and r.name=$3) created_by_admin
+    from module_entries me left join users u on u.id=me.created_by
+    where me.event_id=$1 and me.module_key=$2 order by me.created_at desc`, [req.event.id, key, ROLES.ADMIN]);
   const statusHistory = await db.query('select h.*, u.first_name, u.last_name from module_status_history h left join users u on u.id=h.created_by where event_id=$1 and module_key=$2 order by created_at desc limit 20', [req.event.id, key]);
   let content = '';
   if (key === 'identificacion') {
@@ -285,11 +303,12 @@ app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent
     const ticketing = (await db.query('select * from ticketing where event_id=$1', [req.event.id])).rows[0] || {};
     const sectors = await db.query('select * from ticket_sectors where event_id=$1', [req.event.id]);
     const phases = await db.query('select * from sales_phases where event_id=$1', [req.event.id]);
+    const sectorRows = sectors.rows.map((sector) => `<tr><td><b>${esc(sector.name)}</b></td><td>${esc(sector.capacity || '-')}</td><td>${sector.price ? `$ ${esc(sector.price)}` : '-'}</td><td>${esc(sector.observation || '-')}</td>${canEdit ? `<td><form method="post" action="/events/${req.event.id}/modules/comercial/sectors/${sector.id}/delete"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Eliminar</button></form></td>` : ''}</tr>`);
     content = `<form method="post" action="/events/${req.event.id}/modules/comercial/ticketing" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Nombre de Ticketera<input name="ticketing_name" value="${esc(ticketing.ticketing_name)}"></label><label>Contacto<input name="contact" value="${esc(ticketing.contact)}"></label><label class="span">Observaciones<textarea name="observations">${esc(ticketing.observations)}</textarea></label><button class="primary span">Guardar Ticketera</button></form>
-    <section class="panel"><h2>Sectores</h2><form method="post" action="/events/${req.event.id}/modules/comercial/sectors" class="inline-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><input name="name" placeholder="Nombre" required><input name="capacity" type="number" placeholder="Capacidad"><input name="price" type="number" step="0.01" placeholder="Precio"><input name="observation" placeholder="Observación"><button>+ Agregar Sector</button></form>${table(['Nombre','Capacidad','Precio','Obs'], sectors.rows.map((s)=>`<tr><td>${esc(s.name)}</td><td>${esc(s.capacity)}</td><td>${esc(s.price)}</td><td>${esc(s.observation)}</td></tr>`))}</section>
+    <section class="panel"><div class="section-heading"><h2>Sectores, cantidades y precios</h2><span>Agregue todos los sectores necesarios</span></div><form method="post" action="/events/${req.event.id}/modules/comercial/sectors" class="sector-form"><input type="hidden" name="_csrf" value="${req.csrfToken}"><div class="sector-rows"><div class="sector-row"><label>Sector<input name="name[]" placeholder="Ej: Campo delantero" required></label><label>Cantidad<input name="capacity[]" type="number" min="0" placeholder="0"></label><label>Precio<input name="price[]" type="number" min="0" step="0.01" placeholder="0,00"></label><label>Observación<input name="observation[]"></label><button type="button" class="remove-sector" title="Quitar fila">×</button></div></div><template class="sector-template"><div class="sector-row"><label>Sector<input name="name[]" required></label><label>Cantidad<input name="capacity[]" type="number" min="0"></label><label>Precio<input name="price[]" type="number" min="0" step="0.01"></label><label>Observación<input name="observation[]"></label><button type="button" class="remove-sector" title="Quitar fila">×</button></div></template><div class="row-actions"><button type="button" class="add-sector">+ Agregar otro sector</button><button class="primary">Guardar sectores</button></div></form>${table(['Sector','Cantidad','Precio','Observación','Acción'], sectorRows)}</section>
     <section class="panel"><h2>Fases de Venta</h2><form method="post" action="/events/${req.event.id}/modules/comercial/phases" class="inline-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><input name="name" placeholder="Nombre" required><input name="date_from" type="date"><input name="date_to" type="date"><button>+ Agregar Fase</button></form>${table(['Nombre','Desde','Hasta'], phases.rows.map((p)=>`<tr><td>${esc(p.name)}</td><td>${esc(p.date_from)}</td><td>${esc(p.date_to)}</td></tr>`))}</section>
     <section class="panel"><h2>Cortesías, promociones, imágenes y legales</h2><form method="post" enctype="multipart/form-data" action="/events/${req.event.id}/modules/comercial/items?_csrf=${req.csrfToken}" class="upload-form inline-grid"><input name="category" value="Imagen/Legal Ticketera"><input name="observation" placeholder="Observación"><input type="file" name="file" required><button>Adjuntar</button><progress hidden max="100"></progress></form></section>`;
-    if (!canEdit) content = `<section class="readonly-details"><div><small>Ticketera</small><b>${esc(ticketing.ticketing_name || 'Sin completar')}</b></div><div><small>Contacto</small><b>${esc(ticketing.contact || 'Sin completar')}</b></div><div><small>Observaciones</small><b>${esc(ticketing.observations || 'Sin observaciones')}</b></div></section><section class="dossier-section"><h2>Sectores</h2>${table(['Nombre','Capacidad','Precio','Observación'], sectors.rows.map((s)=>`<tr><td>${esc(s.name)}</td><td>${esc(s.capacity)}</td><td>${esc(s.price)}</td><td>${esc(s.observation)}</td></tr>`))}</section><section class="dossier-section"><h2>Fases de venta</h2>${table(['Nombre','Desde','Hasta'], phases.rows.map((p)=>`<tr><td>${esc(p.name)}</td><td>${esc(p.date_from)}</td><td>${esc(p.date_to)}</td></tr>`))}</section>`;
+    if (!canEdit) content = `<section class="readonly-details"><div><small>Ticketera</small><b>${esc(ticketing.ticketing_name || 'Sin completar')}</b></div><div><small>Contacto</small><b>${esc(ticketing.contact || 'Sin completar')}</b></div><div><small>Observaciones</small><b>${esc(ticketing.observations || 'Sin observaciones')}</b></div></section><section class="dossier-section"><h2>Sectores</h2>${table(['Sector','Cantidad','Precio','Observación'], sectorRows)}</section><section class="dossier-section"><h2>Fases de venta</h2>${table(['Nombre','Desde','Hasta'], phases.rows.map((p)=>`<tr><td>${esc(p.name)}</td><td>${esc(p.date_from)}</td><td>${esc(p.date_to)}</td></tr>`))}</section>`;
   } else if (key === 'aceptacion') {
     const statusRows = MODULES.filter((m) => m.key !== 'aceptacion').map((m) => {
       const reviewStatus = req.event.module_statuses[m.key] || 'PENDIENTE';
@@ -306,13 +325,21 @@ app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent
   }
   const attachmentCards = files.rows.map((f) => {
     const actions = [];
-    if (canViewEventFile(req.user)) actions.push(`<a href="/files/${f.id}/view" target="_blank">Ver</a>`);
+    if (canViewEventFile(req.user, f, req.event)) actions.push(`<a href="/files/${f.id}/view" target="_blank">Ver</a>`);
     if (canDownloadEventFile(req.user)) actions.push(`<a href="/files/${f.id}/download">Descargar</a>`);
-    const deleteForm = canDeleteEventFile(req.user, req.event)
+    const deleteForm = canDeleteEventFile(req.user, req.event, f)
       ? `<form method="post" action="/files/${f.id}/delete"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Eliminar</button></form>`
       : '';
-    return `<article class="file-card"><b>${esc(f.original_name)}</b><small>${Math.round(f.size_bytes/1024)} KB · ${esc(f.mime_type)}</small>${actions.length ? `<div>${actions.join('')}</div>` : '<small>Archivo cargado</small>'}${deleteForm}</article>`;
+    const source = f.uploaded_by_admin ? 'Documentación subida por administración' : 'Carga del productor';
+    return `<article class="file-card ${f.uploaded_by_admin ? 'admin-document' : ''}"><span class="file-source">${source}</span><b>${esc(f.original_name)}</b><small>${esc(f.first_name)} ${esc(f.last_name)} · ${Math.round(f.size_bytes/1024)} KB</small>${actions.length ? `<div>${actions.join('')}</div>` : '<small>Archivo cargado</small>'}${deleteForm}</article>`;
   }).join('');
+  const entryRows = moduleEntries.rows.map((entry) => {
+    const canOpen = isAdmin(req.user) || isManager(req.user) || entry.created_by_admin;
+    return `<tr><td><b>${esc(entry.label)}</b><br><small>${entry.created_by_admin ? 'Administración' : 'Productor'}</small></td><td>${esc(entry.value || '-')}</td><td>${esc(entry.observation || '-')}</td><td>${entry.attachment_id && canOpen ? `<a href="/files/${entry.attachment_id}/view" target="_blank">Ver archivo</a>` : entry.attachment_id ? 'Archivo cargado' : '-'}</td></tr>`;
+  });
+  const producerEntryForm = canEdit && key !== 'aceptacion' ? `<details class="add-entry"><summary class="button">+ Agregar información</summary><form method="post" enctype="multipart/form-data" action="/events/${req.event.id}/modules/${key}/entries?_csrf=${req.csrfToken}" class="panel form-grid upload-form"><label>Nombre del dato<input name="label" required placeholder="Ej: Contacto de seguridad"></label><label>Información<input name="value" placeholder="Valor o detalle"></label><label class="span">Observación<textarea name="observation"></textarea></label><label class="span">Archivo opcional<input type="file" name="file"></label><progress hidden max="100"></progress><button class="primary span">Agregar al módulo</button></form></details>` : '';
+  const adminDocumentForm = isAdmin(req.user) && key !== 'aceptacion' ? `<details class="add-entry"><summary class="button">+ Publicar documento para el productor</summary><form method="post" enctype="multipart/form-data" action="/admin/events/${req.event.id}/modules/${key}/documents?_csrf=${req.csrfToken}" class="panel form-grid upload-form"><label>Título<input name="label" required placeholder="Ej: Instructivo aprobado"></label><label>Detalle<input name="value"></label><label class="span">Comentario<textarea name="observation"></textarea></label><label class="span">Documento<input type="file" name="file" required></label><progress hidden max="100"></progress><button class="primary span">Publicar documento</button></form></details>` : '';
+  const dynamicEntries = key !== 'aceptacion' ? `<section class="dossier-section"><div class="section-heading"><h2>Información adicional</h2><span>${moduleEntries.rowCount} elementos</span></div>${producerEntryForm}${adminDocumentForm}${entryRows.length ? table(['Dato','Información','Observación','Archivo'], entryRows) : '<p class="empty">Todavía no se agregó información adicional.</p>'}</section>` : '';
   const history = statusHistory.rows.map((h)=>`<li><b>${esc(h.new_status)}</b> ${esc(h.observation)} <small>${esc(h.created_at)}</small></li>`).join('');
   const downloads = isAdmin(req.user)
     ? `<div class="module-actions"><a href="/events/${req.event.id}/modules/${key}/pdf">Descargar PDF</a><a href="/events/${req.event.id}/zip">Descargar Todo</a></div>`
@@ -335,7 +362,30 @@ app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent
   const moduleChecklist = renderChecklist(req.event.id, key === 'aceptacion' ? eventChecklist.items.filter((item) => item.moduleKey !== 'aceptacion') : eventChecklist.items.filter((item) => item.moduleKey === key), key === 'aceptacion' ? 'Carga documental general' : 'Requisitos de carga del módulo');
   const moduleState = renderModuleState(eventChecklist, key, currentStatus);
   const headerOptions = isAdmin(req.user) ? { backHref:`/admin/events/${req.event.id}`, backLabel:'Resumen del expediente', overviewHref:`/admin/events/${req.event.id}` } : {};
-  res.send(layout(req, req.event.name, `${eventHeader(req.event, key, headerOptions)}${downloads}${moduleState}${moduleChecklist}${content}<section class="files">${attachmentCards}</section>${historySection}${reviewPanel}${producerReviewStatus}`));
+  res.send(layout(req, req.event.name, `${eventHeader(req.event, key, headerOptions)}${downloads}${moduleState}${moduleChecklist}${content}${dynamicEntries}<section class="files">${attachmentCards}</section>${historySection}${reviewPanel}${producerReviewStatus}`));
+});
+
+app.post('/events/:eventId/modules/:moduleKey/entries', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), upload.single('file'), async (req, res) => {
+  const key = req.params.moduleKey;
+  if (!MODULES.some((module) => module.key === key) || key === 'aceptacion') return res.status(400).send('Módulo inválido');
+  if (!req.body.label?.trim()) { flash(req, 'error', 'Ingrese un nombre para el dato.'); return res.redirect(`/events/${req.event.id}/modules/${key}`); }
+  const attachment = req.file ? await saveAttachment({ file:req.file, eventId:req.event.id, moduleKey:key, userId:req.user.id }) : null;
+  await db.query('insert into module_entries (event_id,module_key,label,value,observation,attachment_id,created_by) values ($1,$2,$3,$4,$5,$6,$7)', [req.event.id, key, req.body.label, req.body.value, req.body.observation, attachment?.id || null, req.user.id]);
+  await markLoaded(req.event.id, key, req.user.id);
+  await audit(req.user.id, 'agregar_informacion_modulo', 'events', req.event.id, { module:key, label:req.body.label });
+  flash(req, 'ok', 'Información agregada.');
+  res.redirect(`/events/${req.event.id}/modules/${key}`);
+});
+
+app.post('/admin/events/:eventId/modules/:moduleKey/documents', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN), upload.single('file'), async (req, res) => {
+  const key = req.params.moduleKey;
+  if (!req.file || !req.body.label?.trim()) { flash(req, 'error', 'Complete el título y seleccione un documento.'); return res.redirect(`/events/${req.event.id}/modules/${key}`); }
+  const attachment = await saveAttachment({ file:req.file, eventId:req.event.id, moduleKey:key, userId:req.user.id });
+  await db.query('insert into module_entries (event_id,module_key,label,value,observation,attachment_id,created_by) values ($1,$2,$3,$4,$5,$6,$7)', [req.event.id, key, req.body.label, req.body.value, req.body.observation, attachment.id, req.user.id]);
+  await audit(req.user.id, 'publicar_documento_administrativo', 'attachments', attachment.id, { event_id:req.event.id, module:key });
+  await notifyEventOwner(req.event.id, 'DOCUMENTO_ADMINISTRATIVO', `Nuevo documento de administración: ${req.event.name}`, `Administración publicó “${req.body.label}” en ${MODULES.find((module) => module.key === key)?.name || key}.`, `/events/${req.event.id}/modules/${key}`);
+  flash(req, 'ok', 'Documento publicado y productor notificado.');
+  res.redirect(`/events/${req.event.id}/modules/${key}`);
 });
 
 app.post('/events/:eventId/modules/identificacion/company', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
@@ -405,8 +455,24 @@ app.post('/events/:eventId/modules/comercial/ticketing', requireLogin, loadAutho
 });
 
 app.post('/events/:eventId/modules/comercial/sectors', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
-  await db.query('insert into ticket_sectors (event_id,name,capacity,price,observation) values ($1,$2,$3,$4,$5)', [req.event.id, req.body.name, req.body.capacity || null, req.body.price || null, req.body.observation]);
+  const values = (value) => Array.isArray(value) ? value : [value];
+  const names = values(req.body.name);
+  const capacities = values(req.body.capacity);
+  const prices = values(req.body.price);
+  const observations = values(req.body.observation);
+  await db.tx(async (client) => {
+    for (let index = 0; index < names.length; index += 1) {
+      if (!names[index]?.trim()) continue;
+      await client.query('insert into ticket_sectors (event_id,name,capacity,price,observation) values ($1,$2,$3,$4,$5)', [req.event.id, names[index], capacities[index] || null, prices[index] || null, observations[index] || null]);
+    }
+  });
   await markLoaded(req.event.id, 'comercial', req.user.id);
+  res.redirect(`/events/${req.event.id}/modules/comercial`);
+});
+
+app.post('/events/:eventId/modules/comercial/sectors/:sectorId/delete', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
+  await db.query('delete from ticket_sectors where id=$1 and event_id=$2', [req.params.sectorId, req.event.id]);
+  await audit(req.user.id, 'eliminar_sector', 'events', req.event.id, { sector_id:req.params.sectorId });
   res.redirect(`/events/${req.event.id}/modules/comercial`);
 });
 
@@ -460,14 +526,15 @@ app.get('/events/:eventId/zip', requireLogin, loadAuthorizedEvent, requireRole(R
 });
 
 app.get('/files/:id/:mode(view|download)', requireLogin, async (req, res) => {
-  const file = (await db.query('select * from attachments where id=$1 and deleted_at is null', [req.params.id])).rows[0];
+  const file = (await db.query(`select a.*,exists(select 1 from user_roles ur join roles r on r.id=ur.role_id where ur.user_id=a.uploaded_by and r.name=$2) uploaded_by_admin
+    from attachments a where a.id=$1 and a.deleted_at is null`, [req.params.id, ROLES.ADMIN])).rows[0];
   if (!file) return res.status(404).send('Archivo no encontrado');
   if (file.event_id) {
     req.params.eventId = file.event_id;
     await new Promise((resolve) => loadAuthorizedEvent(req, res, resolve));
     if (!req.event) return;
     if (req.params.mode === 'download' && !canDownloadEventFile(req.user)) return res.status(403).send('Acceso denegado');
-    if (req.params.mode === 'view' && !canViewEventFile(req.user)) return res.status(403).send('Acceso denegado');
+    if (req.params.mode === 'view' && !canViewEventFile(req.user, file, req.event)) return res.status(403).send('Acceso denegado');
   } else if (!isAdmin(req.user)) return res.status(403).send('Acceso denegado');
   const target = resolveAttachment(file);
   res.setHeader('Content-Disposition', `${req.params.mode === 'download' ? 'attachment' : 'inline'}; filename="${file.original_name}"`);
@@ -482,7 +549,7 @@ app.post('/files/:id/delete', requireLogin, async (req, res) => {
     req.params.eventId = file.event_id;
     await new Promise((resolve) => loadAuthorizedEvent(req, res, resolve));
     if (!req.event) return;
-    if (!canDeleteEventFile(req.user, req.event)) return res.status(403).send('Acceso denegado');
+    if (!canDeleteEventFile(req.user, req.event, file)) return res.status(403).send('Acceso denegado');
   } else if (!isAdmin(req.user)) return res.status(403).send('Acceso denegado');
   await db.query('update attachments set deleted_at=now() where id=$1', [file.id]);
   await audit(req.user.id, 'eliminar_archivo', 'attachments', file.id, { event_id: file.event_id, module: file.module_key });
@@ -553,8 +620,32 @@ app.get('/admin', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
 
 app.get('/admin/users', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   const users = await db.query(`select u.*, count(e.id) event_count, array_remove(array_agg(r.name), null) roles from users u left join events e on e.owner_user_id=u.id left join user_roles ur on ur.user_id=u.id left join roles r on r.id=ur.role_id group by u.id order by u.created_at desc`);
-  const rows = users.rows.map((u)=>`<tr><td>${esc(u.first_name)} ${esc(u.last_name)}</td><td>${esc(u.email)}</td><td>${esc(u.phone)}</td><td>${esc(u.status)}</td><td>${esc((u.roles || []).join(', '))}</td><td>${u.event_count}</td><td><form method="post" action="/admin/users/${u.id}/status"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="status">${optionList(['PENDIENTE','ACTIVO','BLOQUEADO','DESHABILITADO'], u.status)}</select><button>Estado</button></form><form method="post" action="/admin/users/${u.id}/role"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="role">${optionList(['PRODUCTOR','GERENCIADORA','ADMINISTRADOR'], (u.roles || [])[0])}</select><button>Rol</button></form></td></tr>`);
-  res.send(layout(req, 'Productores', `<h1>Productores y usuarios</h1>${table(['Nombre','Email','Teléfono','Estado','Roles','Eventos','Acciones'], rows)}`));
+  const rows = users.rows.map((u)=>`<tr><td>${esc(u.first_name)} ${esc(u.last_name)}</td><td>${esc(u.email)}</td><td>${esc(u.phone)}</td><td>${esc(u.status)}</td><td>${esc((u.roles || []).join(', '))}</td><td>${u.event_count}</td><td><form method="post" action="/admin/users/${u.id}/status"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="status">${optionList(['PENDIENTE','ACTIVO','BLOQUEADO','DESHABILITADO'], u.status)}</select><button>Estado</button></form><form method="post" action="/admin/users/${u.id}/role"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="role">${optionList(['PRODUCTOR','GERENCIADORA','ADMINISTRADOR','SISTEMAS'], (u.roles || [])[0])}</select><button>Rol</button></form></td></tr>`);
+  res.send(layout(req, 'Productores', `<section class="toolbar"><div><h1>Productores y usuarios</h1><p>Crear accesos y administrar usuarios existentes.</p></div></section><form method="post" action="/admin/users" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2 class="span">Crear usuario</h2><label>Nombre<input name="first_name" required></label><label>Apellido<input name="last_name" required></label><label class="span">Email de acceso<input name="email" type="email" required autocomplete="off"></label><label>Contraseña inicial<input name="password" type="password" minlength="8" required autocomplete="new-password"></label><label>Tipo de usuario<select name="role"><option value="PRODUCTOR">Productor</option><option value="SISTEMAS">Sistemas</option></select></label><button class="primary span">Crear usuario activo</button></form><section class="dossier-section">${table(['Nombre','Email','Teléfono','Estado','Roles','Eventos','Acciones'], rows)}</section>`));
+});
+
+app.post('/admin/users', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+  try {
+    const account = parseBody(z.object({
+      first_name: z.string().trim().min(1),
+      last_name: z.string().trim().min(1),
+      email: z.string().trim().email(),
+      password: z.string().min(8),
+      role: z.enum([ROLES.PRODUCER, ROLES.SYSTEMS]),
+    }), req.body);
+    const user = await db.tx(async (client) => {
+      const created = await client.query(`insert into users (first_name,last_name,email,username,password_hash,status)
+        values ($1,$2,$3,$3,$4,'ACTIVO') returning id,email`, [account.first_name, account.last_name, account.email, await hashPassword(account.password)]);
+      await client.query('insert into user_roles (user_id,role_id) select $1,id from roles where name=$2', [created.rows[0].id, account.role]);
+      return created.rows[0];
+    });
+    await audit(req.user.id, 'crear_usuario', 'users', user.id, { email: user.email, role: account.role });
+    await sendMail(user.email, 'Acceso al Portal de Productores', `Tu usuario fue creado. Ingresa en ${config.appUrl} con este email. La contraseña inicial te la entregará el administrador.`);
+    flash(req, 'ok', `Usuario ${account.email} creado y activo.`);
+  } catch (error) {
+    flash(req, 'error', error.code === '23505' ? 'Ese email ya está registrado.' : error.message);
+  }
+  res.redirect('/admin/users');
 });
 
 app.post('/admin/users/:id/status', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
@@ -728,6 +819,85 @@ app.post('/admin/updates/run', requireLogin, requireRole(ROLES.ADMIN), async (re
   await audit(req.user.id, 'solicitar_actualizacion', 'system_updates', row.rows[0].id);
   flash(req, 'ok', 'Actualización registrada. El flujo seguro se ejecuta con el script documentado del servidor.');
   res.redirect('/admin/settings');
+});
+
+app.get('/systems', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
+  const [mail, backup, backups] = await Promise.all([
+    getMailSettings(),
+    getBackupSettings(),
+    db.query('select * from backup_runs order by created_at desc limit 50'),
+  ]);
+  const backupRows = backups.rows.map((row) => `<tr><td><b>${esc(row.filename || 'Sin archivo')}</b><br><small>${esc(row.source)}</small></td><td><span class="badge">${esc(row.status)}</span></td><td>${row.size_bytes ? `${Math.round(Number(row.size_bytes) / 1024)} KB` : '-'}</td><td>${esc(new Date(row.created_at).toLocaleString('es-AR'))}</td><td><div class="row-actions">${row.storage_path ? `<a href="/systems/backups/${row.id}/download">Descargar</a>` : ''}</div>${row.storage_path ? `<details><summary>Restaurar</summary><form method="post" action="/systems/backups/${row.id}/restore" class="form-stack compact-form"><input type="hidden" name="_csrf" value="${req.csrfToken}"><input name="confirmation" placeholder="Escribir RESTAURAR" required pattern="RESTAURAR"><button>Confirmar restauración</button></form></details>` : ''}</td></tr>`);
+  res.send(layout(req, 'Sistemas', `<section class="toolbar"><div><h1>Sistemas</h1><p>Correo, automatizaciones y resguardo de la base de datos.</p></div></section><div class="systems-grid">
+    <form method="post" action="/systems/mail" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2 class="span">Correo de notificaciones</h2><label>Servidor SMTP<input name="host" value="${esc(mail.host)}" placeholder="smtp.ejemplo.com"></label><label>Puerto<input name="port" type="number" value="${esc(mail.port)}"></label><label>Usuario<input name="user" value="${esc(mail.user)}"></label><label>Remitente<input name="from" value="${esc(mail.from)}"></label><label class="span">Contraseña SMTP<input name="password" type="password" placeholder="${mail.hasStoredPassword ? 'Configurada; dejar vacío para conservar' : 'Ingresar contraseña'}"></label><label class="check-label"><input name="secure" type="checkbox" ${mail.secure ? 'checked' : ''}> Usar conexión SSL directa</label><button class="primary span">Guardar correo</button></form>
+    <section class="panel"><h2>Probar correo</h2><p>Estado: <b>${mail.host && mail.user && (mail.hasStoredPassword || config.smtp.password) ? 'Configurado' : 'Pendiente'}</b></p><form method="post" action="/systems/mail/test" class="form-stack"><input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Enviar prueba a<input name="email" type="email" value="${esc(req.user.email)}" required></label><button>Enviar prueba</button></form></section>
+    <form method="post" action="/systems/backups/settings" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2 class="span">Backup automático</h2><label>Frecuencia<select name="frequency"><option value="daily" ${backup.frequency === 'daily' ? 'selected' : ''}>Diario</option><option value="weekly" ${backup.frequency === 'weekly' ? 'selected' : ''}>Semanal</option></select></label><label>Conservar durante<input name="retention_days" type="number" min="1" value="${backup.retentionDays}"></label><label class="span">Email de backup<input name="email" type="email" value="${esc(backup.email)}" placeholder="sistemas@empresa.com"></label><label class="check-label"><input name="enabled" type="checkbox" ${backup.enabled ? 'checked' : ''}> Activar backup automático</label><label class="check-label"><input name="send_file" type="checkbox" ${backup.sendFile ? 'checked' : ''}> Adjuntar al email si pesa menos de 20 MB</label><button class="primary span">Guardar automatización</button></form>
+    <section class="panel"><h2>Acciones de backup</h2><form method="post" action="/systems/backups/run"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button class="primary">Crear backup ahora</button></form><form method="post" action="/systems/backups/upload?_csrf=${req.csrfToken}" enctype="multipart/form-data" class="form-stack upload-form"><label>Subir archivo .dump<input name="file" type="file" accept=".dump" required></label><progress hidden max="100"></progress><button>Subir backup</button></form></section>
+  </div><section class="dossier-section"><div class="section-heading"><h2>Backups disponibles</h2><span>${backups.rowCount} registros recientes</span></div>${table(['Archivo','Estado','Tamaño','Fecha','Acciones'], backupRows)}</section>`));
+});
+
+app.post('/systems/mail', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
+  await saveMailSettings({ host:req.body.host, port:req.body.port, secure:Boolean(req.body.secure), user:req.body.user, password:req.body.password, from:req.body.from }, req.user.id);
+  await audit(req.user.id, 'configurar_correo', 'system_settings', 'smtp');
+  flash(req, 'ok', 'Configuración de correo guardada.');
+  res.redirect('/systems');
+});
+
+app.post('/systems/mail/test', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
+  try {
+    await verifyMail();
+    await sendMail(req.body.email, 'Prueba - Portal de Productores', 'El correo del portal está configurado correctamente.');
+    flash(req, 'ok', `Correo de prueba enviado a ${req.body.email}.`);
+  } catch (error) {
+    flash(req, 'error', `No se pudo enviar: ${error.message}`);
+  }
+  res.redirect('/systems');
+});
+
+app.post('/systems/backups/settings', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
+  await saveBackupSettings({ enabled:Boolean(req.body.enabled), frequency:req.body.frequency, email:req.body.email, sendFile:Boolean(req.body.send_file), retentionDays:req.body.retention_days }, req.user.id);
+  await audit(req.user.id, 'configurar_backups', 'system_settings', 'backups');
+  flash(req, 'ok', 'Automatización de backups guardada.');
+  res.redirect('/systems');
+});
+
+app.post('/systems/backups/run', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
+  try {
+    const backup = await createBackup({ userId:req.user.id });
+    await audit(req.user.id, 'crear_backup', 'backup_runs', backup.id);
+    flash(req, 'ok', `Backup ${backup.filename} creado.`);
+  } catch (error) {
+    flash(req, 'error', `No se pudo crear el backup: ${error.message}`);
+  }
+  res.redirect('/systems');
+});
+
+app.post('/systems/backups/upload', requireLogin, requireRole(ROLES.SYSTEMS), backupUpload.single('file'), async (req, res) => {
+  if (!req.file) { flash(req, 'error', 'Seleccione un archivo .dump válido.'); return res.redirect('/systems'); }
+  const backup = await registerUploadedBackup(req.file, req.user.id);
+  await audit(req.user.id, 'subir_backup', 'backup_runs', backup.id);
+  flash(req, 'ok', 'Backup subido. Puede descargarlo o restaurarlo.');
+  res.redirect('/systems');
+});
+
+app.get('/systems/backups/:id/download', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
+  const backup = await resolveBackup(req.params.id);
+  if (!backup) return res.status(404).send('Backup no encontrado');
+  res.download(backup.target, backup.filename);
+});
+
+app.post('/systems/backups/:id/restore', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
+  if (req.body.confirmation !== 'RESTAURAR') { flash(req, 'error', 'Escriba RESTAURAR para confirmar.'); return res.redirect('/systems'); }
+  const backup = await resolveBackup(req.params.id);
+  if (!backup) return res.status(404).send('Backup no encontrado');
+  try {
+    await restoreBackup(backup, req.user.id);
+    await audit(req.user.id, 'restaurar_backup', 'backup_runs', backup.id);
+    flash(req, 'ok', 'Base de datos restaurada.');
+  } catch (error) {
+    flash(req, 'error', `La restauración falló: ${error.message}`);
+  }
+  res.redirect('/systems');
 });
 
 app.get('/health', (req, res) => res.json({ ok: true, version: fs.readFileSync(path.join(config.root, 'VERSION'), 'utf8').trim() }));

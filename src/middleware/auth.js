@@ -41,8 +41,16 @@ function isManager(user) {
   return user?.roles?.includes(ROLES.MANAGER);
 }
 
-function canViewEventFile(user) {
-  return isAdmin(user) || isManager(user);
+function isSystems(user) {
+  return user?.roles?.includes(ROLES.SYSTEMS);
+}
+
+function canViewEventFile(user, file, event) {
+  return isAdmin(user) || isManager(user) || (
+    user?.roles?.includes(ROLES.PRODUCER)
+    && event?.owner_user_id === user.id
+    && file?.uploaded_by_admin
+  );
 }
 
 function canDownloadEventFile(user) {
@@ -57,8 +65,8 @@ function canReviewEventContent(user) {
   return isAdmin(user) || isManager(user);
 }
 
-function canDeleteEventFile(user, event) {
-  return canEditEventContent(user, event);
+function canDeleteEventFile(user, event, file) {
+  return isAdmin(user) || (canEditEventContent(user, event) && file?.uploaded_by === user.id);
 }
 
 async function loadAuthorizedEvent(req, res, next) {
@@ -91,6 +99,7 @@ module.exports = {
   loadAuthorizedEvent,
   isAdmin,
   isManager,
+  isSystems,
   canViewEventFile,
   canDownloadEventFile,
   canEditEventContent,

@@ -34,4 +34,22 @@
       xhr.send(new FormData(form));
     });
   });
+
+  document.querySelectorAll('.sector-form').forEach((form) => {
+    const rows = form.querySelector('.sector-rows');
+    const template = form.querySelector('.sector-template');
+    form.querySelector('.add-sector')?.addEventListener('click', () => {
+      rows.appendChild(template.content.cloneNode(true));
+      dirty = true;
+    });
+    form.addEventListener('click', (event) => {
+      const remove = event.target.closest('.remove-sector');
+      if (!remove) return;
+      const row = remove.closest('.sector-row');
+      if (rows.children.length === 1) {
+        row.querySelectorAll('input').forEach((input) => { input.value = ''; });
+      } else row.remove();
+      dirty = true;
+    });
+  });
 }());

@@ -19,6 +19,7 @@ test('roles include required access levels', () => {
   assert.equal(ROLES.ADMIN, 'ADMINISTRADOR');
   assert.equal(ROLES.PRODUCER, 'PRODUCTOR');
   assert.equal(ROLES.MANAGER, 'GERENCIADORA');
+  assert.equal(ROLES.SYSTEMS, 'SISTEMAS');
 });
 
 test('reset token hashing is deterministic and not plaintext', () => {
@@ -32,10 +33,14 @@ test('event file permissions separate producer, manager and admin access', () =>
   const admin = { id: 'admin-id', roles: [ROLES.ADMIN] };
   const producer = { id: 'producer-id', roles: [ROLES.PRODUCER] };
   const manager = { id: 'manager-id', roles: [ROLES.MANAGER] };
+  const producerFile = { uploaded_by: producer.id, uploaded_by_admin: false };
+  const adminFile = { uploaded_by: admin.id, uploaded_by_admin: true };
 
   assert.equal(canViewEventFile(admin), true);
   assert.equal(canViewEventFile(manager), true);
   assert.equal(canViewEventFile(producer), false);
+  assert.equal(canViewEventFile(producer, adminFile, event), true);
+  assert.equal(canViewEventFile(producer, producerFile, event), false);
   assert.equal(canDownloadEventFile(admin), true);
   assert.equal(canDownloadEventFile(manager), false);
   assert.equal(canDownloadEventFile(producer), false);
@@ -45,9 +50,10 @@ test('event file permissions separate producer, manager and admin access', () =>
   assert.equal(canReviewEventContent(admin), true);
   assert.equal(canReviewEventContent(manager), true);
   assert.equal(canReviewEventContent(producer), false);
-  assert.equal(canDeleteEventFile(admin, event), false);
-  assert.equal(canDeleteEventFile(producer, event), true);
-  assert.equal(canDeleteEventFile(manager, event), false);
+  assert.equal(canDeleteEventFile(admin, event, producerFile), true);
+  assert.equal(canDeleteEventFile(producer, event, producerFile), true);
+  assert.equal(canDeleteEventFile(producer, event, adminFile), false);
+  assert.equal(canDeleteEventFile(manager, event, producerFile), false);
 });
 
 test('staff template can be parsed and validates required fields', async () => {

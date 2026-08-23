@@ -34,6 +34,7 @@ const config = {
     workdir: process.env.UPDATE_WORKDIR || root,
   },
   pgDumpBin: process.env.PG_DUMP_BIN || 'pg_dump',
+  pgRestoreBin: process.env.PG_RESTORE_BIN || 'pg_restore',
   npmBin: process.env.NPM_BIN || 'pnpm',
   root,
 };
