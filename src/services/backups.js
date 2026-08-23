@@ -6,6 +6,13 @@ const sanitize = require('sanitize-filename');
 const config = require('../config');
 const db = require('../db');
 const { sendMail } = require('../utils/email');
+const {
+  DEFAULT_TIMEZONE,
+  isBackupDue,
+  normalizeEmails,
+  normalizeTime,
+  normalizeWeekdays,
+} = require('../utils/backup-schedule');
 
 fs.mkdirSync(config.backupPath, { recursive: true });
 
@@ -22,20 +29,31 @@ function run(command, args) {
 async function getBackupSettings() {
   const rows = await db.query("select key,value from system_settings where key like 'backup_%'");
   const values = Object.fromEntries(rows.rows.map((row) => [row.key, row.value || '']));
+  const frequency = ['daily', 'weekly', 'twice_weekly'].includes(values.backup_frequency) ? values.backup_frequency : 'daily';
+  const emails = normalizeEmails(values.backup_email);
   return {
     enabled: values.backup_enabled === 'true',
-    frequency: values.backup_frequency === 'weekly' ? 'weekly' : 'daily',
-    email: values.backup_email || '',
+    frequency,
+    emails,
+    email: emails.join(', '),
+    weekdays: normalizeWeekdays(values.backup_weekdays),
+    time: normalizeTime(values.backup_time),
+    timezone: values.backup_timezone || DEFAULT_TIMEZONE,
     sendFile: values.backup_send_file === 'true',
     retentionDays: Math.max(1, Number(values.backup_retention_days) || 30),
   };
 }
 
 async function saveBackupSettings(values, userId) {
+  const frequency = ['daily', 'weekly', 'twice_weekly'].includes(values.frequency) ? values.frequency : 'twice_weekly';
+  const emails = normalizeEmails(values.emails || values.email);
   const settings = {
     backup_enabled: values.enabled ? 'true' : 'false',
-    backup_frequency: values.frequency === 'weekly' ? 'weekly' : 'daily',
-    backup_email: values.email || '',
+    backup_frequency: frequency,
+    backup_email: emails.join(','),
+    backup_weekdays: normalizeWeekdays(values.weekdays).join(','),
+    backup_time: normalizeTime(values.time),
+    backup_timezone: values.timezone || DEFAULT_TIMEZONE,
     backup_send_file: values.sendFile ? 'true' : 'false',
     backup_retention_days: String(Math.max(1, Number(values.retentionDays) || 30)),
   };
@@ -72,17 +90,17 @@ async function createBackup({ source = 'MANUAL', userId = null, notify = true } 
     await db.query("update backup_runs set status='SUCCESS',size_bytes=$2,finished_at=now() where id=$1", [record.id, size]);
     const settings = await getBackupSettings();
     await pruneBackups(settings.retentionDays);
-    if (notify && settings.email) {
+    if (notify && settings.emails.length) {
       const link = `${config.appUrl}/systems/backups`;
       const attachments = settings.sendFile && size <= 20 * 1024 * 1024 ? [{ filename, path: target }] : undefined;
       const note = settings.sendFile && !attachments ? '\nEl archivo supera 20 MB y no se adjuntó al email.' : '';
-      await sendMail(settings.email, 'Backup correcto - Portal de Productores', `Se creó ${filename} correctamente.${note}\n\nAdministrar backups: ${link}`, { attachments });
+      await sendMail(settings.emails, 'Backup correcto - Portal de Productores', `Se creó ${filename} correctamente.${note}\n\nAdministrar backups: ${link}`, { attachments });
     }
     return { id: record.id, filename, target, size };
   } catch (error) {
     await db.query("update backup_runs set status='FAILED',detail=$2,finished_at=now() where id=$1", [record.id, error.message]);
-    const settings = await getBackupSettings().catch(() => ({ email: '' }));
-    if (settings.email) await sendMail(settings.email, 'Falló el backup - Portal de Productores', error.message).catch(() => {});
+    const settings = await getBackupSettings().catch(() => ({ emails: [] }));
+    if (settings.emails.length) await sendMail(settings.emails, 'Falló el backup - Portal de Productores', error.message).catch(() => {});
     throw error;
   }
 }
@@ -123,9 +141,8 @@ async function schedulerTick() {
   try {
     const settings = await getBackupSettings();
     if (!settings.enabled) return;
-    const hours = settings.frequency === 'weekly' ? 168 : 24;
     const last = (await db.query("select created_at from backup_runs where source='AUTO' and status='SUCCESS' order by created_at desc limit 1")).rows[0];
-    if (!last || Date.now() - new Date(last.created_at).getTime() >= hours * 3600000) await createBackup({ source: 'AUTO' });
+    if (isBackupDue(settings, last?.created_at)) await createBackup({ source: 'AUTO' });
   } catch (error) {
     console.error('Backup automático:', error.message);
   } finally {
