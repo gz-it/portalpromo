@@ -19,6 +19,14 @@ const demoUsers = [
     password: process.env.DEMO_PRODUCER_PASSWORD,
     role: 'PRODUCTOR',
   },
+  ...(process.env.DEMO_SYSTEMS_PASSWORD ? [{
+    firstName: 'Sistemas',
+    lastName: 'Demo',
+    email: process.env.DEMO_SYSTEMS_EMAIL || 'sistemas@portalpromo.local',
+    username: process.env.DEMO_SYSTEMS_EMAIL || 'sistemas@portalpromo.local',
+    password: process.env.DEMO_SYSTEMS_PASSWORD,
+    role: 'SISTEMAS',
+  }] : []),
 ];
 
 async function main() {
@@ -44,7 +52,7 @@ async function main() {
       );
     }
     await pool.query('commit');
-    console.log('Usuarios demo listos: admin y productor.');
+    console.log(`Usuarios demo listos: ${demoUsers.map((user) => user.role.toLowerCase()).join(', ')}.`);
   } catch (error) {
     await pool.query('rollback');
     throw error;
