@@ -49,17 +49,24 @@ function authPage(req, mode = 'login') {
   const forms = {
     login: `<form method="post" action="/login" class="panel form-stack">
       <input type="hidden" name="_csrf" value="${req.csrfToken}">
-      <label>Usuario o email<input name="login" required autocomplete="username"></label>
+      <label>Email de acceso<input name="login" required autocomplete="username"></label>
       <label>Contraseña<input name="password" type="password" required autocomplete="current-password"></label>
       <button class="primary">Ingresar</button>
       <p><a href="/register">Registrarse</a> · <a href="/forgot">Recuperar contraseña</a></p>
+      <p><a href="/resend-verification">Reenviar confirmación de email</a></p>
     </form>`,
     register: `<form method="post" action="/register" class="panel form-grid">
       <input type="hidden" name="_csrf" value="${req.csrfToken}">
-      ${['Nombre:first_name','Apellido:last_name','Email:email','Teléfono:phone','Usuario:username'].map((x) => { const [l,n]=x.split(':'); return `<label>${l}<input name="${n}" required></label>`; }).join('')}
+      ${['Nombre:first_name','Apellido:last_name','Email:email','Teléfono:phone'].map((x) => { const [l,n]=x.split(':'); return `<label>${l}<input name="${n}" type="${n === 'email' ? 'email' : 'text'}" required></label>`; }).join('')}
       <label>Contraseña<input name="password" type="password" required minlength="8"></label>
       <label>Confirmar contraseña<input name="confirm_password" type="password" required minlength="8"></label>
       <button class="primary span">Crear cuenta</button><p class="span"><a href="/login">Ya tengo cuenta</a></p>
+    </form>`,
+    verification: `<form method="post" action="/resend-verification" class="panel form-stack">
+      <input type="hidden" name="_csrf" value="${req.csrfToken}">
+      <label>Email<input name="email" type="email" required></label>
+      <button class="primary">Reenviar confirmación</button>
+      <p><a href="/login">Volver al login</a></p>
     </form>`,
     forgot: `<form method="post" action="/forgot" class="panel form-stack">
       <input type="hidden" name="_csrf" value="${req.csrfToken}">

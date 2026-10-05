@@ -26,7 +26,8 @@ const {
 } = require('./middleware/auth');
 const { csrf } = require('./middleware/csrf');
 const { audit } = require('./utils/audit');
-const { sendMail, verifyMail, getMailSettings, saveMailSettings } = require('./utils/email');
+const { sendMail, enabled: mailEnabled, verifyMail, getMailSettings, saveMailSettings } = require('./utils/email');
+const { sendVerification, confirmEmail, notifyRegistrationAdmins } = require('./services/registration');
 const { hashPassword, verifyPassword, makeToken, hashToken } = require('./utils/security');
 const { esc, layout, authPage, eventHeader, table, optionList } = require('./ui');
 const { loadSettings, setSetting } = require('./services/settings');
@@ -137,29 +138,57 @@ app.get('/forgot', (req, res) => res.send(authPage(req, 'forgot')));
 app.post('/register', async (req, res) => {
   try {
     const data = parseBody(z.object({
-      first_name: z.string().min(1), last_name: z.string().min(1), email: z.string().email(), phone: z.string().optional(),
-      username: z.string().min(3), password: z.string().min(8), confirm_password: z.string().min(8),
+      first_name: z.string().trim().min(1), last_name: z.string().trim().min(1), email: z.string().trim().email().transform((value) => value.toLowerCase()), phone: z.string().optional(),
+      password: z.string().min(8), confirm_password: z.string().min(8),
     }).refine((v) => v.password === v.confirm_password, 'Las contrasenas no coinciden'), req.body);
-    const exists = await db.query('select 1 from users where email=$1 or username=$2', [data.email, data.username]);
+    if (!(await mailEnabled())) throw new Error('El registro por correo estará disponible cuando se configure el correo del portal.');
+    const exists = await db.query('select 1 from users where lower(email)=$1 or lower(username)=$1', [data.email]);
     if (exists.rowCount) throw new Error('Email o usuario ya registrado');
     const passwordHash = await hashPassword(data.password);
     const user = await db.tx(async (client) => {
       const created = await client.query(
-        `insert into users (first_name,last_name,email,phone,username,password_hash,status)
-         values ($1,$2,$3,$4,$5,$6,'PENDIENTE') returning *`,
-        [data.first_name, data.last_name, data.email, data.phone || null, data.username, passwordHash],
+        `insert into users (first_name,last_name,email,phone,username,password_hash,status,email_verification_required)
+         values ($1,$2,$3,$4,$5,$6,'PENDIENTE',true) returning *`,
+        [data.first_name, data.last_name, data.email, data.phone || null, data.email, passwordHash],
       );
       await client.query(`insert into user_roles (user_id, role_id) select $1, id from roles where name='PRODUCTOR'`, [created.rows[0].id]);
       return created.rows[0];
     });
     await audit(user.id, 'registro', 'users', user.id, { email: user.email });
-    await sendMail(user.email, 'Registro recibido', 'Tu cuenta fue recibida y requiere aprobacion administrativa.');
-    flash(req, 'ok', 'Registro recibido. Tu cuenta requiere aprobacion administrativa.');
+    try {
+      await sendVerification(user);
+      flash(req, 'ok', 'Revisá tu correo para confirmar tu email. Después el administrador aprobará tu acceso.');
+    } catch (error) {
+      console.error('Confirmación de registro:', error.message);
+      flash(req, 'error', 'Tu cuenta fue creada, pero no pudimos enviar el correo. Usá Reenviar confirmación para volver a intentarlo.');
+    }
     res.redirect('/login');
   } catch (error) {
     flash(req, 'error', error.message);
     res.redirect('/register');
   }
+});
+
+app.get('/verify-email/:token', (req, res) => res.send(layout(req, 'Confirmar email', `<form method="post" class="panel form-stack"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h1>Confirmar email</h1><button class="primary">Confirmar mi dirección de email</button></form>`, { narrow: true })));
+app.post('/verify-email/:token', async (req, res) => {
+  const user = await confirmEmail(req.params.token);
+  if (!user) { flash(req, 'error', 'El enlace ya fue usado o venció. Podés reenviar la confirmación.'); return res.redirect('/login'); }
+  await notifyRegistrationAdmins(user).catch((error) => console.error('Aviso de registro:', error.message));
+  flash(req, 'ok', 'Email confirmado. Tu cuenta queda pendiente de aprobación administrativa.');
+  res.redirect('/login');
+});
+
+app.get('/resend-verification', (req, res) => res.send(authPage(req, 'verification')));
+app.post('/resend-verification', rateLimit({ windowMs: 15 * 60 * 1000, limit: 5 }), async (req, res) => {
+  try {
+    const email = parseBody(z.string().trim().email().transform((value) => value.toLowerCase()), req.body.email);
+    const user = (await db.query('select * from users where lower(email)=$1 and email_verification_required and email_verified_at is null', [email])).rows[0];
+    if (user) await sendVerification(user);
+    flash(req, 'ok', 'Si tu cuenta requiere confirmación, recibirás un nuevo enlace por correo.');
+  } catch (error) {
+    flash(req, 'error', 'No se pudo reenviar la confirmación. Intentá más tarde.');
+  }
+  res.redirect('/login');
 });
 
 app.post('/login', async (req, res) => {
@@ -176,6 +205,10 @@ app.post('/login', async (req, res) => {
   }
   if (user.status !== 'ACTIVO') {
     flash(req, 'error', `Cuenta ${user.status.toLowerCase()}.`);
+    return res.redirect('/login');
+  }
+  if (user.email_verification_required && !user.email_verified_at) {
+    flash(req, 'error', 'Confirmá tu email antes de ingresar. Podés reenviar la confirmación.');
     return res.redirect('/login');
   }
   req.session.userId = user.id;
@@ -649,7 +682,17 @@ app.post('/admin/users', requireLogin, requireRole(ROLES.ADMIN), async (req, res
 });
 
 app.post('/admin/users/:id/status', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+  const status = parseBody(z.enum(['PENDIENTE','ACTIVO','BLOQUEADO','DESHABILITADO']), req.body.status);
+  const user = (await db.query('select * from users where id=$1', [req.params.id])).rows[0];
+  if (!user) return res.status(404).send('Usuario no encontrado');
+  if (status === 'ACTIVO' && user.email_verification_required && !user.email_verified_at) {
+    flash(req, 'error', 'El productor debe confirmar su email antes de activar su cuenta.');
+    return res.redirect('/admin/users');
+  }
   await db.query('update users set status=$1, updated_at=now() where id=$2', [req.body.status, req.params.id]);
+  if (status === 'ACTIVO' && user.status !== 'ACTIVO') {
+    await sendMail(user.email, 'Acceso aprobado - Portal de Productores', `Tu cuenta fue aprobada. Ingresá con tu email y contraseña en ${config.appUrl}/login`).catch((error) => console.error('Correo de activación:', error.message));
+  }
   await audit(req.user.id, 'cambiar_estado_usuario', 'users', req.params.id, { status: req.body.status });
   res.redirect('/admin/users');
 });

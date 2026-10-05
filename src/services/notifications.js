@@ -33,7 +33,10 @@ async function notifyAdminsOfProducerUpdate(eventId, moduleKey, actorId) {
     const recipients = await db.query(`select distinct u.email from users u join user_roles ur on ur.user_id=u.id join roles r on r.id=ur.role_id where r.name=$1 and u.status='ACTIVO'`, [ROLES.ADMIN]);
     const subject = `Nueva carga en ${context.event_name}`;
     const message = `${context.actor_name} actualizó ${moduleName(moduleKey)}.`;
-    await Promise.allSettled(recipients.rows.map((recipient) => sendMail(recipient.email, subject, `${message}\n\nAbrir: ${config.appUrl}/events/${eventId}/modules/${moduleKey}`)));
+    const results = await Promise.allSettled(recipients.rows.map((recipient) => sendMail(recipient.email, subject, `${message}\n\nAbrir: ${config.appUrl}/events/${eventId}/modules/${moduleKey}`)));
+    for (const result of results) {
+      if (result.status === 'rejected') console.error('Correo de nueva carga:', result.reason.message);
+    }
   } catch (error) {
     console.error('No se pudo notificar la carga:', error.message);
   }
