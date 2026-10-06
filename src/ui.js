@@ -52,8 +52,7 @@ function authPage(req, mode = 'login') {
       <label>Email de acceso<input name="login" required autocomplete="username"></label>
       <label>Contraseña<input name="password" type="password" required autocomplete="current-password"></label>
       <button class="primary">Ingresar</button>
-      <p><a href="/register">Registrarse</a> · <a href="/forgot">Recuperar contraseña</a></p>
-      <p><a href="/resend-verification">Reenviar confirmación de email</a></p>
+      <p><a href="/forgot">Recuperar contraseña</a></p>
     </form>`,
     register: `<form method="post" action="/register" class="panel form-grid">
       <input type="hidden" name="_csrf" value="${req.csrfToken}">

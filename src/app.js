@@ -26,8 +26,9 @@ const {
 } = require('./middleware/auth');
 const { csrf } = require('./middleware/csrf');
 const { audit } = require('./utils/audit');
-const { sendMail, enabled: mailEnabled, verifyMail, getMailSettings, saveMailSettings } = require('./utils/email');
+const { sendMail, verifyMail, getMailSettings, saveMailSettings } = require('./utils/email');
 const { sendVerification, confirmEmail, notifyRegistrationAdmins } = require('./services/registration');
+const { sendInvitation, acceptInvitation } = require('./services/invitations');
 const { hashPassword, verifyPassword, makeToken, hashToken } = require('./utils/security');
 const { esc, layout, authPage, eventHeader, table, optionList } = require('./ui');
 const { loadSettings, setSetting } = require('./services/settings');
@@ -132,41 +133,11 @@ app.get('/branding/logo', async (req, res) => {
 
 app.get('/', (req, res) => res.redirect(req.user ? '/dashboard' : '/login'));
 app.get('/login', (req, res) => res.send(authPage(req, 'login')));
-app.get('/register', (req, res) => res.send(authPage(req, 'register')));
+app.get('/register', (req, res) => res.redirect('/login'));
 app.get('/forgot', (req, res) => res.send(authPage(req, 'forgot')));
 
 app.post('/register', async (req, res) => {
-  try {
-    const data = parseBody(z.object({
-      first_name: z.string().trim().min(1), last_name: z.string().trim().min(1), email: z.string().trim().email().transform((value) => value.toLowerCase()), phone: z.string().optional(),
-      password: z.string().min(8), confirm_password: z.string().min(8),
-    }).refine((v) => v.password === v.confirm_password, 'Las contrasenas no coinciden'), req.body);
-    if (!(await mailEnabled())) throw new Error('El registro por correo estará disponible cuando se configure el correo del portal.');
-    const exists = await db.query('select 1 from users where lower(email)=$1 or lower(username)=$1', [data.email]);
-    if (exists.rowCount) throw new Error('Email o usuario ya registrado');
-    const passwordHash = await hashPassword(data.password);
-    const user = await db.tx(async (client) => {
-      const created = await client.query(
-        `insert into users (first_name,last_name,email,phone,username,password_hash,status,email_verification_required)
-         values ($1,$2,$3,$4,$5,$6,'PENDIENTE',true) returning *`,
-        [data.first_name, data.last_name, data.email, data.phone || null, data.email, passwordHash],
-      );
-      await client.query(`insert into user_roles (user_id, role_id) select $1, id from roles where name='PRODUCTOR'`, [created.rows[0].id]);
-      return created.rows[0];
-    });
-    await audit(user.id, 'registro', 'users', user.id, { email: user.email });
-    try {
-      await sendVerification(user);
-      flash(req, 'ok', 'Revisá tu correo para confirmar tu email. Después el administrador aprobará tu acceso.');
-    } catch (error) {
-      console.error('Confirmación de registro:', error.message);
-      flash(req, 'error', 'Tu cuenta fue creada, pero no pudimos enviar el correo. Usá Reenviar confirmación para volver a intentarlo.');
-    }
-    res.redirect('/login');
-  } catch (error) {
-    flash(req, 'error', error.message);
-    res.redirect('/register');
-  }
+  return res.status(403).send('El administrador debe invitarte por email para crear tu acceso.');
 });
 
 app.get('/verify-email/:token', (req, res) => res.send(layout(req, 'Confirmar email', `<form method="post" class="panel form-stack"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h1>Confirmar email</h1><button class="primary">Confirmar mi dirección de email</button></form>`, { narrow: true })));
@@ -182,7 +153,7 @@ app.get('/resend-verification', (req, res) => res.send(authPage(req, 'verificati
 app.post('/resend-verification', rateLimit({ windowMs: 15 * 60 * 1000, limit: 5 }), async (req, res) => {
   try {
     const email = parseBody(z.string().trim().email().transform((value) => value.toLowerCase()), req.body.email);
-    const user = (await db.query('select * from users where lower(email)=$1 and email_verification_required and email_verified_at is null', [email])).rows[0];
+    const user = (await db.query('select * from users where lower(email)=$1 and email_verification_required and email_verified_at is null and not invitation_pending', [email])).rows[0];
     if (user) await sendVerification(user);
     flash(req, 'ok', 'Si tu cuenta requiere confirmación, recibirás un nuevo enlace por correo.');
   } catch (error) {
@@ -201,6 +172,10 @@ app.post('/login', async (req, res) => {
   const user = result.rows[0];
   if (!user || !(await verifyPassword(req.body.password || '', user.password_hash))) {
     flash(req, 'error', 'Credenciales invalidas');
+    return res.redirect('/login');
+  }
+  if (user.invitation_pending) {
+    flash(req, 'error', 'Creá tu contraseña desde la invitación enviada a tu email.');
     return res.redirect('/login');
   }
   if (user.status !== 'ACTIVO') {
@@ -245,6 +220,21 @@ app.post('/reset/:token', async (req, res) => {
   });
   flash(req, 'ok', 'Contrasena actualizada.');
   res.redirect('/login');
+});
+
+app.get('/invitation/:token', (req, res) => res.send(layout(req, 'Crear contraseña', `<form method="post" class="panel form-stack"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h1>Crear contraseña</h1><label>Contraseña<input name="password" type="password" minlength="8" required autocomplete="new-password"></label><label>Confirmar contraseña<input name="confirm_password" type="password" minlength="8" required autocomplete="new-password"></label><button class="primary">Activar mi acceso</button></form>`, { narrow: true })));
+app.post('/invitation/:token', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }), async (req, res) => {
+  try {
+    const values = parseBody(z.object({ password:z.string().min(8), confirm_password:z.string() }).refine((value) => value.password === value.confirm_password, 'Las contraseñas no coinciden.'), req.body);
+    const user = await acceptInvitation(req.params.token, values.password);
+    if (!user) throw new Error('La invitación venció, ya fue usada o el acceso fue bloqueado. Pedile al administrador que la reenvíe.');
+    await audit(user.id, 'aceptar_invitacion', 'users', user.id);
+    flash(req, 'ok', 'Tu acceso está activo. Ingresá con tu email y la contraseña que creaste.');
+    res.redirect('/login');
+  } catch (error) {
+    flash(req, 'error', error.message);
+    res.redirect(`/invitation/${encodeURIComponent(req.params.token)}`);
+  }
 });
 
 app.get('/dashboard', requireLogin, async (req, res) => {
@@ -653,8 +643,8 @@ app.get('/admin', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
 
 app.get('/admin/users', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   const users = await db.query(`select u.*, count(e.id) event_count, array_remove(array_agg(r.name), null) roles from users u left join events e on e.owner_user_id=u.id left join user_roles ur on ur.user_id=u.id left join roles r on r.id=ur.role_id group by u.id order by u.created_at desc`);
-  const rows = users.rows.map((u)=>`<tr><td>${esc(u.first_name)} ${esc(u.last_name)}</td><td>${esc(u.email)}</td><td>${esc(u.phone)}</td><td>${esc(u.status)}</td><td>${esc((u.roles || []).join(', '))}</td><td>${u.event_count}</td><td><form method="post" action="/admin/users/${u.id}/status"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="status">${optionList(['PENDIENTE','ACTIVO','BLOQUEADO','DESHABILITADO'], u.status)}</select><button>Estado</button></form><form method="post" action="/admin/users/${u.id}/role"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="role">${optionList(['PRODUCTOR','GERENCIADORA','ADMINISTRADOR','SISTEMAS'], (u.roles || [])[0])}</select><button>Rol</button></form></td></tr>`);
-  res.send(layout(req, 'Productores', `<section class="toolbar"><div><h1>Productores y usuarios</h1><p>Crear accesos y administrar usuarios existentes.</p></div></section><form method="post" action="/admin/users" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2 class="span">Crear usuario</h2><label>Nombre<input name="first_name" required></label><label>Apellido<input name="last_name" required></label><label class="span">Email de acceso<input name="email" type="email" required autocomplete="off"></label><label>Contraseña inicial<input name="password" type="password" minlength="8" required autocomplete="new-password"></label><label>Tipo de usuario<select name="role"><option value="PRODUCTOR">Productor</option><option value="SISTEMAS">Sistemas</option></select></label><button class="primary span">Crear usuario activo</button></form><section class="dossier-section">${table(['Nombre','Email','Teléfono','Estado','Roles','Eventos','Acciones'], rows)}</section>`));
+  const rows = users.rows.map((u)=>`<tr><td>${esc(u.first_name)} ${esc(u.last_name)}</td><td>${esc(u.email)}</td><td>${esc(u.phone)}</td><td>${u.invitation_pending ? 'Invitación pendiente' : esc(u.status)}</td><td>${esc((u.roles || []).join(', '))}</td><td>${u.event_count}</td><td>${u.invitation_pending && u.status === 'PENDIENTE' ? `<form method="post" action="/admin/users/${u.id}/invitation"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Reenviar invitación</button></form>` : ''}<form method="post" action="/admin/users/${u.id}/status"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="status">${optionList(['PENDIENTE','ACTIVO','BLOQUEADO','DESHABILITADO'], u.status)}</select><button>Estado</button></form><form method="post" action="/admin/users/${u.id}/role"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="role">${optionList(['PRODUCTOR','GERENCIADORA','ADMINISTRADOR','SISTEMAS'], (u.roles || [])[0])}</select><button>Rol</button></form></td></tr>`);
+  res.send(layout(req, 'Productores', `<section class="toolbar"><div><h1>Productores y usuarios</h1><p>Crear accesos y administrar usuarios existentes.</p></div></section><form method="post" action="/admin/users" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2 class="span">Crear usuario</h2><label>Nombre<input name="first_name" required></label><label>Apellido<input name="last_name" required></label><label class="span">Email de acceso<input name="email" type="email" required autocomplete="off"></label><label>Tipo de usuario<select name="role"><option value="PRODUCTOR">Productor</option><option value="SISTEMAS">Sistemas</option></select></label><button class="primary span">Crear y enviar invitación</button></form><section class="dossier-section">${table(['Nombre','Email','Teléfono','Estado','Roles','Eventos','Acciones'], rows)}</section>`));
 });
 
 app.post('/admin/users', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
@@ -662,22 +652,37 @@ app.post('/admin/users', requireLogin, requireRole(ROLES.ADMIN), async (req, res
     const account = parseBody(z.object({
       first_name: z.string().trim().min(1),
       last_name: z.string().trim().min(1),
-      email: z.string().trim().email(),
-      password: z.string().min(8),
+      email: z.string().trim().email().transform((value) => value.toLowerCase()),
       role: z.enum([ROLES.PRODUCER, ROLES.SYSTEMS]),
     }), req.body);
     const user = await db.tx(async (client) => {
-      const created = await client.query(`insert into users (first_name,last_name,email,username,password_hash,status)
-        values ($1,$2,$3,$3,$4,'ACTIVO') returning id,email`, [account.first_name, account.last_name, account.email, await hashPassword(account.password)]);
+      const exists = await client.query('select 1 from users where lower(email)=$1 or lower(username)=$1', [account.email]);
+      if (exists.rowCount) throw new Error('Ese email ya está registrado.');
+      const created = await client.query(`insert into users (first_name,last_name,email,username,password_hash,status,invitation_pending,email_verification_required)
+        values ($1,$2,$3,$3,$4,'PENDIENTE',true,true) returning id,email`, [account.first_name, account.last_name, account.email, await hashPassword(makeToken())]);
       await client.query('insert into user_roles (user_id,role_id) select $1,id from roles where name=$2', [created.rows[0].id, account.role]);
       return created.rows[0];
     });
     await audit(req.user.id, 'crear_usuario', 'users', user.id, { email: user.email, role: account.role });
-    await sendMail(user.email, 'Acceso al Portal de Productores', `Tu usuario fue creado. Ingresa en ${config.appUrl} con este email. La contraseña inicial te la entregará el administrador.`);
-    flash(req, 'ok', `Usuario ${account.email} creado y activo.`);
+    try {
+      await sendInvitation(user);
+      flash(req, 'ok', `Invitación enviada a ${account.email}. El usuario creará su propia contraseña.`);
+    } catch (error) {
+      flash(req, 'error', `Usuario creado y pendiente de invitación. ${error.message} Podés reenviarla desde su fila.`);
+    }
   } catch (error) {
     flash(req, 'error', error.code === '23505' ? 'Ese email ya está registrado.' : error.message);
   }
+  res.redirect('/admin/users');
+});
+
+app.post('/admin/users/:id/invitation', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+  const user = (await db.query("select * from users where id=$1 and invitation_pending and status='PENDIENTE'", [req.params.id])).rows[0];
+  if (!user) { flash(req, 'error', 'La cuenta no tiene una invitación pendiente.'); return res.redirect('/admin/users'); }
+  try {
+    await sendInvitation(user);
+    flash(req, 'ok', `Invitación reenviada a ${user.email}.`);
+  } catch (error) { flash(req, 'error', error.message); }
   res.redirect('/admin/users');
 });
 
