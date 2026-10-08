@@ -71,6 +71,9 @@ function canDeleteEventFile(user, event, file) {
 
 async function loadAuthorizedEvent(req, res, next) {
   const id = req.params.eventId || req.params.id;
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id || '')) {
+    return res.status(404).send('Evento no encontrado');
+  }
   const eventResult = await db.query(
     `select e.*, u.first_name || ' ' || u.last_name as owner_name
      from events e join users u on u.id=e.owner_user_id where e.id=$1`,

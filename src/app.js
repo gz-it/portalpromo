@@ -50,23 +50,25 @@ const {
 } = require('./services/backups');
 
 const app = express();
+const { safeRoutes, errorHandler } = require('./middleware/safe-routes');
+const routes = safeRoutes(app);
 app.set('trust proxy', 1);
-app.use(helmet({ contentSecurityPolicy: false }));
-app.use('/public', express.static(path.join(__dirname, 'public')));
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
-app.use(cookieParser());
-app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 500 }));
-app.use(session({
+routes.use(helmet({ contentSecurityPolicy: false }));
+routes.use('/public', express.static(path.join(__dirname, 'public')));
+routes.use(express.urlencoded({ extended: true }));
+routes.use(express.json());
+routes.use(cookieParser());
+routes.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 500 }));
+routes.use(session({
   store: new PgSession({ pool: db.pool, createTableIfMissing: true }),
   secret: config.sessionSecret,
   resave: false,
   saveUninitialized: false,
   cookie: { httpOnly: true, sameSite: 'lax', secure: config.sessionSecure, maxAge: 1000 * 60 * 60 * 8 },
 }));
-app.use(attachUser);
-app.use(csrf);
-app.use(async (req, res, next) => {
+routes.use(attachUser);
+routes.use(csrf);
+routes.use(async (req, res, next) => {
   if (!req.user) return next();
   try {
     const unread = await db.query('select count(*) count from notifications where user_id=$1 and read_at is null', [req.user.id]);
@@ -76,7 +78,7 @@ app.use(async (req, res, next) => {
     next(error);
   }
 });
-app.use(async (req, res, next) => {
+routes.use(async (req, res, next) => {
   if (!app.locals.portalSettings) await loadSettings(app);
   next();
 });
@@ -119,7 +121,7 @@ function renderModuleState(checklist, moduleKey, reviewStatus) {
   return `<section class="module-state-summary"><div class="load-${load.state}"><small>Carga del productor</small><strong>${loadStatusLabel(load)}</strong><span>${load.complete}/${load.total} requisitos completos</span></div><div class="review-${reviewStatus.toLowerCase()}"><small>Revisión administrativa</small><strong>${reviewStatusLabel(reviewStatus)}</strong><span>${reviewStatus === 'APROBADO' ? 'Conforme por administración' : reviewStatus === 'OBSERVADO' ? 'Requiere correcciones' : 'Todavía no fue aprobada'}</span></div></section>`;
 }
 
-app.get('/branding/logo', async (req, res) => {
+routes.get('/branding/logo', async (req, res) => {
   const file = (await db.query(
     `select a.* from system_settings s
      join attachments a on a.id::text=s.value
@@ -131,17 +133,17 @@ app.get('/branding/logo', async (req, res) => {
   fs.createReadStream(resolveAttachment(file)).pipe(res);
 });
 
-app.get('/', (req, res) => res.redirect(req.user ? '/dashboard' : '/login'));
-app.get('/login', (req, res) => res.send(authPage(req, 'login')));
-app.get('/register', (req, res) => res.redirect('/login'));
-app.get('/forgot', (req, res) => res.send(authPage(req, 'forgot')));
+routes.get('/', (req, res) => res.redirect(req.user ? '/dashboard' : '/login'));
+routes.get('/login', (req, res) => res.send(authPage(req, 'login')));
+routes.get('/register', (req, res) => res.redirect('/login'));
+routes.get('/forgot', (req, res) => res.send(authPage(req, 'forgot')));
 
-app.post('/register', async (req, res) => {
+routes.post('/register', async (req, res) => {
   return res.status(403).send('El administrador debe invitarte por email para crear tu acceso.');
 });
 
-app.get('/verify-email/:token', (req, res) => res.send(layout(req, 'Confirmar email', `<form method="post" class="panel form-stack"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h1>Confirmar email</h1><button class="primary">Confirmar mi dirección de email</button></form>`, { narrow: true })));
-app.post('/verify-email/:token', async (req, res) => {
+routes.get('/verify-email/:token', (req, res) => res.send(layout(req, 'Confirmar email', `<form method="post" class="panel form-stack"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h1>Confirmar email</h1><button class="primary">Confirmar mi dirección de email</button></form>`, { narrow: true })));
+routes.post('/verify-email/:token', async (req, res) => {
   const user = await confirmEmail(req.params.token);
   if (!user) { flash(req, 'error', 'El enlace ya fue usado o venció. Podés reenviar la confirmación.'); return res.redirect('/login'); }
   await notifyRegistrationAdmins(user).catch((error) => console.error('Aviso de registro:', error.message));
@@ -149,8 +151,8 @@ app.post('/verify-email/:token', async (req, res) => {
   res.redirect('/login');
 });
 
-app.get('/resend-verification', (req, res) => res.send(authPage(req, 'verification')));
-app.post('/resend-verification', rateLimit({ windowMs: 15 * 60 * 1000, limit: 5 }), async (req, res) => {
+routes.get('/resend-verification', (req, res) => res.send(authPage(req, 'verification')));
+routes.post('/resend-verification', rateLimit({ windowMs: 15 * 60 * 1000, limit: 5 }), async (req, res) => {
   try {
     const email = parseBody(z.string().trim().email().transform((value) => value.toLowerCase()), req.body.email);
     const user = (await db.query('select * from users where lower(email)=$1 and email_verification_required and email_verified_at is null and not invitation_pending', [email])).rows[0];
@@ -162,7 +164,7 @@ app.post('/resend-verification', rateLimit({ windowMs: 15 * 60 * 1000, limit: 5 
   res.redirect('/login');
 });
 
-app.post('/login', async (req, res) => {
+routes.post('/login', async (req, res) => {
   const result = await db.query(
     `select u.*, array_remove(array_agg(r.name), null) roles from users u
      left join user_roles ur on ur.user_id=u.id left join roles r on r.id=ur.role_id
@@ -191,12 +193,12 @@ app.post('/login', async (req, res) => {
   res.redirect('/dashboard');
 });
 
-app.post('/logout', requireLogin, async (req, res) => {
+routes.post('/logout', requireLogin, async (req, res) => {
   await audit(req.user.id, 'logout', 'users', req.user.id);
   req.session.destroy(() => res.redirect('/login'));
 });
 
-app.post('/forgot', async (req, res) => {
+routes.post('/forgot', async (req, res) => {
   const user = (await db.query('select * from users where email=$1', [req.body.email])).rows[0];
   if (user) {
     const token = makeToken();
@@ -207,10 +209,10 @@ app.post('/forgot', async (req, res) => {
   res.redirect('/login');
 });
 
-app.get('/reset/:token', (req, res) => res.send(layout(req, 'Cambiar contrasena', `<form method="post" class="panel form-stack">
+routes.get('/reset/:token', (req, res) => res.send(layout(req, 'Cambiar contrasena', `<form method="post" class="panel form-stack">
   <input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Nueva contraseña<input type="password" name="password" required minlength="8"></label><button class="primary">Cambiar</button></form>`, { narrow: true })));
 
-app.post('/reset/:token', async (req, res) => {
+routes.post('/reset/:token', async (req, res) => {
   const tokenHash = hashToken(req.params.token);
   const row = (await db.query('select * from password_reset_tokens where token_hash=$1 and used_at is null and expires_at>now()', [tokenHash])).rows[0];
   if (!row) { flash(req, 'error', 'Token invalido o vencido'); return res.redirect('/forgot'); }
@@ -222,8 +224,8 @@ app.post('/reset/:token', async (req, res) => {
   res.redirect('/login');
 });
 
-app.get('/invitation/:token', (req, res) => res.send(layout(req, 'Crear contraseña', `<form method="post" class="panel form-stack"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h1>Crear contraseña</h1><label>Contraseña<input name="password" type="password" minlength="8" required autocomplete="new-password"></label><label>Confirmar contraseña<input name="confirm_password" type="password" minlength="8" required autocomplete="new-password"></label><button class="primary">Activar mi acceso</button></form>`, { narrow: true })));
-app.post('/invitation/:token', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }), async (req, res) => {
+routes.get('/invitation/:token', (req, res) => res.send(layout(req, 'Crear contraseña', `<form method="post" class="panel form-stack"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h1>Crear contraseña</h1><label>Contraseña<input name="password" type="password" minlength="8" required autocomplete="new-password"></label><label>Confirmar contraseña<input name="confirm_password" type="password" minlength="8" required autocomplete="new-password"></label><button class="primary">Activar mi acceso</button></form>`, { narrow: true })));
+routes.post('/invitation/:token', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }), async (req, res) => {
   try {
     const values = parseBody(z.object({ password:z.string().min(8), confirm_password:z.string() }).refine((value) => value.password === value.confirm_password, 'Las contraseñas no coinciden.'), req.body);
     const user = await acceptInvitation(req.params.token, values.password);
@@ -237,7 +239,7 @@ app.post('/invitation/:token', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }
   }
 });
 
-app.get('/dashboard', requireLogin, async (req, res) => {
+routes.get('/dashboard', requireLogin, async (req, res) => {
   if (isAdmin(req.user)) return res.redirect('/admin');
   if (isSystems(req.user)) return res.redirect('/systems');
   const events = isManager(req.user)
@@ -250,13 +252,13 @@ app.get('/dashboard', requireLogin, async (req, res) => {
   res.send(layout(req, 'Mis eventos', `<section class="toolbar"><div><h1>${isManager(req.user) ? 'Eventos autorizados' : 'Mis eventos'}</h1><p>Entrar, abrir evento, elegir modulo, cargar y guardar.</p></div>${!isManager(req.user) ? '<a class="primary" href="/events/new">+ Crear Evento</a>' : ''}</section><section class="cards">${cards || '<p class="empty">No hay eventos.</p>'}</section>`));
 });
 
-app.get('/events/new', requireLogin, requireRole(ROLES.PRODUCER), (req, res) => res.send(layout(req, 'Crear evento', `<form method="post" action="/events" class="panel form-grid">
+routes.get('/events/new', requireLogin, requireRole(ROLES.PRODUCER), (req, res) => res.send(layout(req, 'Crear evento', `<form method="post" action="/events" class="panel form-grid">
   <input type="hidden" name="_csrf" value="${req.csrfToken}">
   ${['Nombre del evento:name','Artista:artist','Fecha del show:show_date','Lugar / Venue:venue','Ciudad:city','Provincia:province'].map((x)=>{const [l,n]=x.split(':'); return `<label>${l}<input name="${n}" ${n==='show_date'?'type="date"':''} required></label>`}).join('')}
   <label class="span">Fechas adicionales<textarea name="extra_dates" placeholder="Una fecha por linea, formato AAAA-MM-DD"></textarea></label>
   <button class="primary span">Crear Evento</button></form>`)));
 
-app.post('/events', requireLogin, requireRole(ROLES.PRODUCER), async (req, res) => {
+routes.post('/events', requireLogin, requireRole(ROLES.PRODUCER), async (req, res) => {
   const data = parseBody(z.object({ name:z.string().min(1), artist:z.string().min(1), show_date:z.string().min(1), venue:z.string().min(1), city:z.string().min(1), province:z.string().min(1), extra_dates:z.string().optional() }), req.body);
   const event = await db.tx(async (client) => {
     const created = await client.query(`insert into events (owner_user_id,created_by,name,artist,venue,city,province) values ($1,$1,$2,$3,$4,$5,$6) returning *`, [req.user.id, data.name, data.artist, data.venue, data.city, data.province]);
@@ -269,7 +271,7 @@ app.post('/events', requireLogin, requireRole(ROLES.PRODUCER), async (req, res) 
   res.redirect(`/events/${event.id}/modules/identificacion`);
 });
 
-app.get('/events/:eventId', requireLogin, loadAuthorizedEvent, (req, res) => res.redirect(`/events/${req.event.id}/modules/identificacion`));
+routes.get('/events/:eventId', requireLogin, loadAuthorizedEvent, (req, res) => res.redirect(`/events/${req.event.id}/modules/identificacion`));
 
 async function rowsForModule(eventId, key) {
   const map = {
@@ -279,7 +281,7 @@ async function rowsForModule(eventId, key) {
   return map[key] || [];
 }
 
-app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent, async (req, res) => {
+routes.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent, async (req, res) => {
   const key = req.params.moduleKey;
   const canEdit = canEditEventContent(req.user, req.event);
   await loadModuleStatuses(req.event);
@@ -388,7 +390,7 @@ app.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEvent
   res.send(layout(req, req.event.name, `${eventHeader(req.event, key, headerOptions)}${downloads}${moduleState}${moduleChecklist}${content}${dynamicEntries}<section class="files">${attachmentCards}</section>${historySection}${reviewPanel}${producerReviewStatus}`));
 });
 
-app.post('/events/:eventId/modules/:moduleKey/entries', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), upload.single('file'), async (req, res) => {
+routes.post('/events/:eventId/modules/:moduleKey/entries', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), upload.single('file'), async (req, res) => {
   const key = req.params.moduleKey;
   if (!MODULES.some((module) => module.key === key) || key === 'aceptacion') return res.status(400).send('Módulo inválido');
   if (!req.body.label?.trim()) { flash(req, 'error', 'Ingrese un nombre para el dato.'); return res.redirect(`/events/${req.event.id}/modules/${key}`); }
@@ -400,7 +402,7 @@ app.post('/events/:eventId/modules/:moduleKey/entries', requireLogin, loadAuthor
   res.redirect(`/events/${req.event.id}/modules/${key}`);
 });
 
-app.post('/admin/events/:eventId/modules/:moduleKey/documents', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN), upload.single('file'), async (req, res) => {
+routes.post('/admin/events/:eventId/modules/:moduleKey/documents', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN), upload.single('file'), async (req, res) => {
   const key = req.params.moduleKey;
   if (!req.file || !req.body.label?.trim()) { flash(req, 'error', 'Complete el título y seleccione un documento.'); return res.redirect(`/events/${req.event.id}/modules/${key}`); }
   const attachment = await saveAttachment({ file:req.file, eventId:req.event.id, moduleKey:key, userId:req.user.id });
@@ -411,7 +413,7 @@ app.post('/admin/events/:eventId/modules/:moduleKey/documents', requireLogin, lo
   res.redirect(`/events/${req.event.id}/modules/${key}`);
 });
 
-app.post('/events/:eventId/modules/identificacion/company', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
+routes.post('/events/:eventId/modules/identificacion/company', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
   await db.query(`insert into event_companies (event_id,legal_name,cuit,responsible,phone,email) values ($1,$2,$3,$4,$5,$6)
     on conflict (event_id) do update set legal_name=$2,cuit=$3,responsible=$4,phone=$5,email=$6,updated_at=now()`,
     [req.event.id, req.body.legal_name, req.body.cuit, req.body.responsible, req.body.phone, req.body.email]);
@@ -421,12 +423,12 @@ app.post('/events/:eventId/modules/identificacion/company', requireLogin, loadAu
   res.redirect(`/events/${req.event.id}/modules/identificacion`);
 });
 
-app.get('/events/:eventId/staff/template', requireLogin, loadAuthorizedEvent, async (req, res) => {
+routes.get('/events/:eventId/staff/template', requireLogin, loadAuthorizedEvent, async (req, res) => {
   res.setHeader('Content-Disposition', 'attachment; filename="plantilla-personal.xlsx"');
   res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(await workbookTemplateBuffer());
 });
 
-app.post('/events/:eventId/staff/import', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), upload.single('file'), async (req, res) => {
+routes.post('/events/:eventId/staff/import', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), upload.single('file'), async (req, res) => {
   const attachment = await saveAttachment({ file: req.file, eventId: req.event.id, moduleKey: 'identificacion', userId: req.user.id });
   const parsed = await parseStaff(req.file.path);
   const importRow = await db.query('insert into staff_imports (event_id,attachment_id,total_rows,valid_rows,error_rows,errors,imported_by,confirmed_at) values ($1,$2,$3,$4,$5,$6,$7,case when $5=0 then now() else null end) returning id', [req.event.id, attachment.id, parsed.total, parsed.valid, parsed.invalid, JSON.stringify(parsed.errors), req.user.id]);
@@ -443,14 +445,14 @@ app.post('/events/:eventId/staff/import', requireLogin, loadAuthorizedEvent, req
   res.redirect(`/events/${req.event.id}/modules/identificacion`);
 });
 
-app.post('/events/:eventId/staff', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
+routes.post('/events/:eventId/staff', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
   await db.query('insert into event_staff (event_id,first_name,last_name,cuit,role_title,company,phone,email) values ($1,$2,$3,$4,$5,$6,$7,$8)', [req.event.id, req.body.first_name, req.body.last_name, req.body.cuit, req.body.role_title, req.body.company, req.body.phone, req.body.email]);
   await markLoaded(req.event.id, 'identificacion', req.user.id);
   await audit(req.user.id, 'agregar_personal', 'events', req.event.id);
   res.redirect(`/events/${req.event.id}/modules/identificacion`);
 });
 
-app.post('/events/:eventId/modules/:moduleKey/items', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), upload.single('file'), async (req, res) => {
+routes.post('/events/:eventId/modules/:moduleKey/items', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), upload.single('file'), async (req, res) => {
   const key = req.params.moduleKey;
   const attachment = await saveAttachment({ file: req.file, eventId: req.event.id, moduleKey: key, userId: req.user.id });
   const title = req.body.title || req.body.category;
@@ -470,14 +472,14 @@ app.post('/events/:eventId/modules/:moduleKey/items', requireLogin, loadAuthoriz
   res.redirect(`/events/${req.event.id}/modules/${key}`);
 });
 
-app.post('/events/:eventId/modules/comercial/ticketing', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
+routes.post('/events/:eventId/modules/comercial/ticketing', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
   await db.query(`insert into ticketing (event_id,ticketing_name,contact,observations) values ($1,$2,$3,$4)
     on conflict (event_id) do update set ticketing_name=$2,contact=$3,observations=$4,updated_at=now()`, [req.event.id, req.body.ticketing_name, req.body.contact, req.body.observations]);
   await markLoaded(req.event.id, 'comercial', req.user.id);
   res.redirect(`/events/${req.event.id}/modules/comercial`);
 });
 
-app.post('/events/:eventId/modules/comercial/sectors', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
+routes.post('/events/:eventId/modules/comercial/sectors', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
   const values = (value) => Array.isArray(value) ? value : [value];
   const names = values(req.body.name);
   const capacities = values(req.body.capacity);
@@ -493,19 +495,20 @@ app.post('/events/:eventId/modules/comercial/sectors', requireLogin, loadAuthori
   res.redirect(`/events/${req.event.id}/modules/comercial`);
 });
 
-app.post('/events/:eventId/modules/comercial/sectors/:sectorId/delete', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
+routes.post('/events/:eventId/modules/comercial/sectors/:sectorId/delete', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
   await db.query('delete from ticket_sectors where id=$1 and event_id=$2', [req.params.sectorId, req.event.id]);
   await audit(req.user.id, 'eliminar_sector', 'events', req.event.id, { sector_id:req.params.sectorId });
+  await markLoaded(req.event.id, 'comercial', req.user.id);
   res.redirect(`/events/${req.event.id}/modules/comercial`);
 });
 
-app.post('/events/:eventId/modules/comercial/phases', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
+routes.post('/events/:eventId/modules/comercial/phases', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), async (req, res) => {
   await db.query('insert into sales_phases (event_id,name,date_from,date_to) values ($1,$2,$3,$4)', [req.event.id, req.body.name, req.body.date_from || null, req.body.date_to || null]);
   await markLoaded(req.event.id, 'comercial', req.user.id);
   res.redirect(`/events/${req.event.id}/modules/comercial`);
 });
 
-app.post('/events/:eventId/modules/ticketera/link', requireLogin, loadAuthorizedEvent, requireRole(ROLES.MANAGER), async (req, res) => {
+routes.post('/events/:eventId/modules/ticketera/link', requireLogin, loadAuthorizedEvent, requireRole(ROLES.MANAGER), async (req, res) => {
   await db.query(`insert into ticketing (event_id,ticketing_name,sales_url,sales_date,sales_observations) values ($1,$2,$3,$4,$5)
     on conflict (event_id) do update set ticketing_name=$2,sales_url=$3,sales_date=$4,sales_observations=$5,updated_at=now()`, [req.event.id, req.body.ticketing_name, req.body.sales_url, req.body.sales_date || null, req.body.sales_observations]);
   const owner = (await db.query('select email from users where id=$1', [req.event.owner_user_id])).rows[0];
@@ -514,7 +517,7 @@ app.post('/events/:eventId/modules/ticketera/link', requireLogin, loadAuthorized
   res.redirect(`/events/${req.event.id}/modules/ticketera`);
 });
 
-app.post('/events/:eventId/ticketera/decision', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN, ROLES.MANAGER), async (req, res) => {
+routes.post('/events/:eventId/ticketera/decision', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN, ROLES.MANAGER), async (req, res) => {
   if (req.body.decision === 'OBSERVADO' && !req.body.comment) { flash(req, 'error', 'El comentario es obligatorio al observar.'); return res.redirect(`/events/${req.event.id}/modules/ticketera`); }
   await db.query('insert into ticketing_approvals (event_id,decision,comment,created_by) values ($1,$2,$3,$4)', [req.event.id, req.body.decision, req.body.comment, req.user.id]);
   await audit(req.user.id, 'decision_ticketera', 'events', req.event.id, { decision: req.body.decision });
@@ -522,7 +525,7 @@ app.post('/events/:eventId/ticketera/decision', requireLogin, loadAuthorizedEven
   res.redirect(`/events/${req.event.id}/modules/ticketera`);
 });
 
-app.post('/events/:eventId/review/:moduleKey', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN, ROLES.MANAGER), async (req, res) => {
+routes.post('/events/:eventId/review/:moduleKey', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN, ROLES.MANAGER), async (req, res) => {
   if (!['APROBADO','OBSERVADO','PENDIENTE'].includes(req.body.status)) return res.status(400).send('Estado invalido');
   if (req.body.status === 'OBSERVADO' && !req.body.observation) { flash(req, 'error', 'La observación es obligatoria.'); return res.redirect(`/events/${req.event.id}/modules/${req.params.moduleKey}`); }
   const previous = (await db.query('select status from event_modules where event_id=$1 and module_key=$2', [req.event.id, req.params.moduleKey])).rows[0]?.status;
@@ -536,19 +539,19 @@ app.post('/events/:eventId/review/:moduleKey', requireLogin, loadAuthorizedEvent
   res.redirect(`/events/${req.event.id}/modules/${req.params.moduleKey}`);
 });
 
-app.get('/events/:eventId/modules/:moduleKey/pdf', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.get('/events/:eventId/modules/:moduleKey/pdf', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN), async (req, res) => {
   const buffer = await modulePdf(req.event, req.params.moduleKey, app.locals.portalSettings);
   res.setHeader('Content-Disposition', `attachment; filename="${req.params.moduleKey}.pdf"`);
   res.type('application/pdf').send(buffer);
 });
 
-app.get('/events/:eventId/zip', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.get('/events/:eventId/zip', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN), async (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="${req.event.name}.zip"`);
   res.type('application/zip');
   await streamEventZip(res, req.event, app.locals.portalSettings);
 });
 
-app.get('/files/:id/:mode(view|download)', requireLogin, async (req, res) => {
+routes.get('/files/:id/:mode(view|download)', requireLogin, async (req, res) => {
   const file = (await db.query(`select a.*,exists(select 1 from user_roles ur join roles r on r.id=ur.role_id where ur.user_id=a.uploaded_by and r.name=$2) uploaded_by_admin
     from attachments a where a.id=$1 and a.deleted_at is null`, [req.params.id, ROLES.ADMIN])).rows[0];
   if (!file) return res.status(404).send('Archivo no encontrado');
@@ -565,7 +568,7 @@ app.get('/files/:id/:mode(view|download)', requireLogin, async (req, res) => {
   fs.createReadStream(target).pipe(res);
 });
 
-app.post('/files/:id/delete', requireLogin, async (req, res) => {
+routes.post('/files/:id/delete', requireLogin, async (req, res) => {
   const file = (await db.query('select * from attachments where id=$1 and deleted_at is null', [req.params.id])).rows[0];
   if (!file) return res.status(404).send('Archivo no encontrado');
   if (file.event_id) {
@@ -580,24 +583,24 @@ app.post('/files/:id/delete', requireLogin, async (req, res) => {
   res.redirect(file.event_id ? `/events/${file.event_id}/modules/${file.module_key}` : '/admin/settings');
 });
 
-app.get('/notifications', requireLogin, async (req, res) => {
+routes.get('/notifications', requireLogin, async (req, res) => {
   const notifications = await db.query('select * from notifications where user_id=$1 order by created_at desc limit 100', [req.user.id]);
   const items = notifications.rows.map((notification) => `<article class="notification-item ${notification.read_at ? '' : 'unread'}"><div><span class="badge">${esc(notification.type.replaceAll('_', ' '))}</span><h2>${esc(notification.title)}</h2><p>${esc(notification.message)}</p><small>${esc(new Date(notification.created_at).toLocaleString('es-AR'))}</small></div><form method="post" action="/notifications/${notification.id}/read"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>${notification.read_at ? 'Abrir' : 'Ver y marcar leida'}</button></form></article>`).join('');
   res.send(layout(req, 'Notificaciones', `<section class="toolbar"><div><h1>Notificaciones</h1><p>${req.user.unread_notifications} pendientes.</p></div>${req.user.unread_notifications ? `<form method="post" action="/notifications/read-all"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Marcar todas como leidas</button></form>` : ''}</section><section class="notification-list">${items || '<p class="empty">No hay notificaciones.</p>'}</section>`));
 });
 
-app.post('/notifications/read-all', requireLogin, async (req, res) => {
+routes.post('/notifications/read-all', requireLogin, async (req, res) => {
   await db.query('update notifications set read_at=now() where user_id=$1 and read_at is null', [req.user.id]);
   res.redirect('/notifications');
 });
 
-app.post('/notifications/:id/read', requireLogin, async (req, res) => {
+routes.post('/notifications/:id/read', requireLogin, async (req, res) => {
   const notification = (await db.query('update notifications set read_at=coalesce(read_at,now()) where id=$1 and user_id=$2 returning link', [req.params.id, req.user.id])).rows[0];
   if (!notification) return res.status(404).send('Notificacion no encontrada');
   res.redirect(notification.link || '/notifications');
 });
 
-app.get('/admin', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.get('/admin', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   const [counts, events, attention, activity] = await Promise.all([
     db.query(`select
       (select count(*) from events) events,
@@ -641,13 +644,13 @@ app.get('/admin', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   `));
 });
 
-app.get('/admin/users', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.get('/admin/users', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   const users = await db.query(`select u.*, count(e.id) event_count, array_remove(array_agg(r.name), null) roles from users u left join events e on e.owner_user_id=u.id left join user_roles ur on ur.user_id=u.id left join roles r on r.id=ur.role_id group by u.id order by u.created_at desc`);
   const rows = users.rows.map((u)=>`<tr><td>${esc(u.first_name)} ${esc(u.last_name)}</td><td>${esc(u.email)}</td><td>${esc(u.phone)}</td><td>${u.invitation_pending ? 'Invitación pendiente' : esc(u.status)}</td><td>${esc((u.roles || []).join(', '))}</td><td>${u.event_count}</td><td>${u.invitation_pending && u.status === 'PENDIENTE' ? `<form method="post" action="/admin/users/${u.id}/invitation"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Reenviar invitación</button></form>` : ''}<form method="post" action="/admin/users/${u.id}/status"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="status">${optionList(['PENDIENTE','ACTIVO','BLOQUEADO','DESHABILITADO'], u.status)}</select><button>Estado</button></form><form method="post" action="/admin/users/${u.id}/role"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="role">${optionList(['PRODUCTOR','GERENCIADORA','ADMINISTRADOR','SISTEMAS'], (u.roles || [])[0])}</select><button>Rol</button></form></td></tr>`);
   res.send(layout(req, 'Productores', `<section class="toolbar"><div><h1>Productores y usuarios</h1><p>Crear accesos y administrar usuarios existentes.</p></div></section><form method="post" action="/admin/users" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2 class="span">Crear usuario</h2><label>Nombre<input name="first_name" required></label><label>Apellido<input name="last_name" required></label><label class="span">Email de acceso<input name="email" type="email" required autocomplete="off"></label><label>Tipo de usuario<select name="role"><option value="PRODUCTOR">Productor</option><option value="SISTEMAS">Sistemas</option></select></label><button class="primary span">Crear y enviar invitación</button></form><section class="dossier-section">${table(['Nombre','Email','Teléfono','Estado','Roles','Eventos','Acciones'], rows)}</section>`));
 });
 
-app.post('/admin/users', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.post('/admin/users', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   try {
     const account = parseBody(z.object({
       first_name: z.string().trim().min(1),
@@ -676,7 +679,7 @@ app.post('/admin/users', requireLogin, requireRole(ROLES.ADMIN), async (req, res
   res.redirect('/admin/users');
 });
 
-app.post('/admin/users/:id/invitation', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.post('/admin/users/:id/invitation', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   const user = (await db.query("select * from users where id=$1 and invitation_pending and status='PENDIENTE'", [req.params.id])).rows[0];
   if (!user) { flash(req, 'error', 'La cuenta no tiene una invitación pendiente.'); return res.redirect('/admin/users'); }
   try {
@@ -686,7 +689,7 @@ app.post('/admin/users/:id/invitation', requireLogin, requireRole(ROLES.ADMIN), 
   res.redirect('/admin/users');
 });
 
-app.post('/admin/users/:id/status', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.post('/admin/users/:id/status', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   const status = parseBody(z.enum(['PENDIENTE','ACTIVO','BLOQUEADO','DESHABILITADO']), req.body.status);
   const user = (await db.query('select * from users where id=$1', [req.params.id])).rows[0];
   if (!user) return res.status(404).send('Usuario no encontrado');
@@ -702,7 +705,7 @@ app.post('/admin/users/:id/status', requireLogin, requireRole(ROLES.ADMIN), asyn
   res.redirect('/admin/users');
 });
 
-app.post('/admin/users/:id/role', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.post('/admin/users/:id/role', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   await db.tx(async (client) => {
     await client.query('delete from user_roles where user_id=$1', [req.params.id]);
     await client.query('insert into user_roles (user_id, role_id) select $1, id from roles where name=$2', [req.params.id, req.body.role]);
@@ -711,7 +714,7 @@ app.post('/admin/users/:id/role', requireLogin, requireRole(ROLES.ADMIN), async 
   res.redirect('/admin/users');
 });
 
-app.get('/admin/events', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.get('/admin/events', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   const events = await db.query(`
     select e.*, u.first_name || ' ' || u.last_name producer,
       count(distinct a.id) filter (where a.deleted_at is null) file_count,
@@ -739,7 +742,7 @@ app.get('/admin/events', requireLogin, requireRole(ROLES.ADMIN), async (req, res
   res.send(layout(req, 'Eventos', `<section class="toolbar"><div><h1>Eventos</h1><p>Seguimiento de documentación y avance por productor.</p></div></section>${table(['Evento','Productor','Avance','Última carga','Expediente','Gerenciadora'], rows)}`));
 });
 
-app.get('/admin/events/:id', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.get('/admin/events/:id', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   const event = (await db.query(`
     select e.*, u.first_name || ' ' || u.last_name producer,
       u.email producer_email,u.phone producer_phone
@@ -810,7 +813,7 @@ app.get('/admin/events/:id', requireLogin, requireRole(ROLES.ADMIN), async (req,
   `));
 });
 
-app.post('/admin/events/:id/manager', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.post('/admin/events/:id/manager', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   if (!req.body.manager_id) {
     flash(req, 'error', 'Seleccione una gerenciadora activa.');
     return res.redirect('/admin/events');
@@ -820,12 +823,12 @@ app.post('/admin/events/:id/manager', requireLogin, requireRole(ROLES.ADMIN), as
   res.redirect('/admin/events');
 });
 
-app.get('/admin/reviews', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.get('/admin/reviews', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   const mods = await db.query(`select m.*, e.name event_name from event_modules m join events e on e.id=m.event_id where m.status in ('CARGADO','OBSERVADO') order by m.updated_at desc`);
   res.send(layout(req, 'Revisiones', `<h1>Revisiones</h1>${table(['Evento','Módulo','Estado','Acción'], mods.rows.map((m)=>`<tr><td>${esc(m.event_name)}</td><td>${esc(m.module_name)}</td><td>${esc(m.status)}</td><td><a href="/events/${m.event_id}/modules/${m.module_key}">Revisar módulo</a></td></tr>`))}`));
 });
 
-app.get('/admin/settings', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.get('/admin/settings', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   const version = fs.readFileSync(path.join(config.root, 'VERSION'), 'utf8').trim();
   const updates = await db.query('select * from system_updates order by started_at desc limit 1');
   res.send(layout(req, 'Configuracion', `<section class="toolbar"><div><h1>Configuración</h1><p>Cuenta administrativa, identidad del portal y mantenimiento.</p></div></section><div class="settings-stack">
@@ -834,7 +837,7 @@ app.get('/admin/settings', requireLogin, requireRole(ROLES.ADMIN), async (req, r
   <section class="panel"><h2>Actualizaciones</h2><p>Versión actual: ${esc(version)}</p><p>Último resultado: ${esc(updates.rows[0]?.status || 'Sin ejecuciones')}</p><form method="post" action="/admin/updates/check"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Buscar actualización</button></form><form method="post" action="/admin/updates/run"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button class="primary">Actualizar sistema</button></form></section></div>`));
 });
 
-app.post('/admin/settings/account', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.post('/admin/settings/account', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   const account = parseBody(z.object({ first_name:z.string().min(1), last_name:z.string().min(1), phone:z.string().optional(), email:z.string().email(), password:z.string().optional() }), req.body);
   if (account.password) await db.query('update users set first_name=$1,last_name=$2,phone=$3,email=$4,password_hash=$5,updated_at=now() where id=$6', [account.first_name, account.last_name, account.phone, account.email, await hashPassword(account.password), req.user.id]);
   else await db.query('update users set first_name=$1,last_name=$2,phone=$3,email=$4,updated_at=now() where id=$5', [account.first_name, account.last_name, account.phone, account.email, req.user.id]);
@@ -843,7 +846,7 @@ app.post('/admin/settings/account', requireLogin, requireRole(ROLES.ADMIN), asyn
   res.redirect('/admin/settings');
 });
 
-app.post('/admin/settings/identity', requireLogin, requireRole(ROLES.ADMIN), upload.single('file'), async (req, res) => {
+routes.post('/admin/settings/identity', requireLogin, requireRole(ROLES.ADMIN), upload.single('file'), async (req, res) => {
   await setSetting('company_name', req.body.company_name, req.user.id);
   await setSetting('portal_title', req.body.portal_title, req.user.id);
   if (req.file) {
@@ -855,12 +858,12 @@ app.post('/admin/settings/identity', requireLogin, requireRole(ROLES.ADMIN), upl
   res.redirect('/admin/settings');
 });
 
-app.post('/admin/updates/check', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.post('/admin/updates/check', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   await db.query('insert into system_updates (status,current_version,available_version,started_by,log,finished_at) values ($1,$2,$3,$4,$5,now())', ['CHECKED', fs.readFileSync(path.join(config.root, 'VERSION'), 'utf8').trim(), 'Verificar repositorio remoto configurado', req.user.id, 'Chequeo registrado.']);
   res.redirect('/admin/settings');
 });
 
-app.post('/admin/updates/run', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.post('/admin/updates/run', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   const running = await db.query("select 1 from system_updates where status='RUNNING' and finished_at is null");
   if (running.rowCount) { flash(req, 'error', 'Ya existe una actualización en ejecución.'); return res.redirect('/admin/settings'); }
   const row = await db.query('insert into system_updates (status,current_version,started_by,log) values ($1,$2,$3,$4) returning id', ['RUNNING', fs.readFileSync(path.join(config.root, 'VERSION'), 'utf8').trim(), req.user.id, 'Ejecute npm run update en el servidor para correr el flujo controlado.']);
@@ -869,7 +872,7 @@ app.post('/admin/updates/run', requireLogin, requireRole(ROLES.ADMIN), async (re
   res.redirect('/admin/settings');
 });
 
-app.get('/systems', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
+routes.get('/systems', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
   const [mail, backup, backups] = await Promise.all([
     getMailSettings(),
     getBackupSettings(),
@@ -886,14 +889,14 @@ app.get('/systems', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) =
   </div><section class="dossier-section"><div class="section-heading"><h2>Backups disponibles</h2><span>${backups.rowCount} registros recientes</span></div>${table(['Archivo','Estado','Tamaño','Fecha','Acciones'], backupRows)}</section>`));
 });
 
-app.post('/systems/mail', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
+routes.post('/systems/mail', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
   await saveMailSettings({ host:req.body.host, port:req.body.port, secure:Boolean(req.body.secure), user:req.body.user, password:req.body.password, from:req.body.from }, req.user.id);
   await audit(req.user.id, 'configurar_correo', 'system_settings', 'smtp');
   flash(req, 'ok', 'Configuración de correo guardada.');
   res.redirect('/systems');
 });
 
-app.post('/systems/mail/test', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
+routes.post('/systems/mail/test', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
   try {
     await verifyMail();
     await sendMail(req.body.email, 'Prueba - Portal de Productores', 'El correo del portal está configurado correctamente.');
@@ -904,14 +907,14 @@ app.post('/systems/mail/test', requireLogin, requireRole(ROLES.SYSTEMS), async (
   res.redirect('/systems');
 });
 
-app.post('/systems/backups/settings', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
+routes.post('/systems/backups/settings', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
   await saveBackupSettings({ enabled:Boolean(req.body.enabled), frequency:req.body.frequency, weekdays:[req.body.weekday_1, req.body.weekday_2], time:req.body.time, emails:[req.body.email_1, req.body.email_2], sendFile:Boolean(req.body.send_file), retentionDays:req.body.retention_days }, req.user.id);
   await audit(req.user.id, 'configurar_backups', 'system_settings', 'backups');
   flash(req, 'ok', 'Automatización de backups guardada.');
   res.redirect('/systems');
 });
 
-app.post('/systems/backups/run', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
+routes.post('/systems/backups/run', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
   try {
     const backup = await createBackup({ userId:req.user.id });
     await audit(req.user.id, 'crear_backup', 'backup_runs', backup.id);
@@ -922,7 +925,7 @@ app.post('/systems/backups/run', requireLogin, requireRole(ROLES.SYSTEMS), async
   res.redirect('/systems');
 });
 
-app.post('/systems/backups/upload', requireLogin, requireRole(ROLES.SYSTEMS), backupUpload.single('file'), async (req, res) => {
+routes.post('/systems/backups/upload', requireLogin, requireRole(ROLES.SYSTEMS), backupUpload.single('file'), async (req, res) => {
   if (!req.file) { flash(req, 'error', 'Seleccione un archivo .dump válido.'); return res.redirect('/systems'); }
   const backup = await registerUploadedBackup(req.file, req.user.id);
   await audit(req.user.id, 'subir_backup', 'backup_runs', backup.id);
@@ -930,13 +933,13 @@ app.post('/systems/backups/upload', requireLogin, requireRole(ROLES.SYSTEMS), ba
   res.redirect('/systems');
 });
 
-app.get('/systems/backups/:id/download', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
+routes.get('/systems/backups/:id/download', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
   const backup = await resolveBackup(req.params.id);
   if (!backup) return res.status(404).send('Backup no encontrado');
   res.download(backup.target, backup.filename);
 });
 
-app.post('/systems/backups/:id/restore', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
+routes.post('/systems/backups/:id/restore', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
   if (req.body.confirmation !== 'RESTAURAR') { flash(req, 'error', 'Escriba RESTAURAR para confirmar.'); return res.redirect('/systems'); }
   const backup = await resolveBackup(req.params.id);
   if (!backup) return res.status(404).send('Backup no encontrado');
@@ -950,11 +953,8 @@ app.post('/systems/backups/:id/restore', requireLogin, requireRole(ROLES.SYSTEMS
   res.redirect('/systems');
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: fs.readFileSync(path.join(config.root, 'VERSION'), 'utf8').trim() }));
+routes.get('/health', (req, res) => res.json({ ok: true, version: fs.readFileSync(path.join(config.root, 'VERSION'), 'utf8').trim() }));
 
-app.use((error, req, res, next) => {
-  console.error(error);
-  res.status(500).send(layout(req, 'Error', '<section class="panel"><h1>No se pudo completar la acción.</h1><p>Reintente o contacte al administrador.</p></section>'));
-});
+routes.use(errorHandler);
 
 module.exports = app;

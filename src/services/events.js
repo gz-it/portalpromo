@@ -19,17 +19,15 @@ async function loadModuleStatuses(event) {
 }
 
 async function markLoaded(eventId, moduleKey, userId) {
-  const current = await db.query('select status from event_modules where event_id=$1 and module_key=$2', [eventId, moduleKey]);
-  const previous = current.rows[0]?.status || 'PENDIENTE';
-  if (previous !== 'APROBADO') {
-    await db.tx(async (client) => {
+  await db.tx(async (client) => {
+      const current = await client.query('select status from event_modules where event_id=$1 and module_key=$2 for update', [eventId, moduleKey]);
+      const previous = current.rows[0]?.status || 'PENDIENTE';
       await client.query('update event_modules set status=$3, updated_at=now() where event_id=$1 and module_key=$2', [eventId, moduleKey, 'CARGADO']);
       await client.query(
         'insert into module_status_history (event_id,module_key,previous_status,new_status,created_by) values ($1,$2,$3,$4,$5)',
         [eventId, moduleKey, previous, 'CARGADO', userId],
       );
-    });
-  }
+  });
   await notifyAdminsOfProducerUpdate(eventId, moduleKey, userId);
 }
 
