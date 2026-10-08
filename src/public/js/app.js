@@ -1,4 +1,15 @@
 (function () {
+  const moduleBar = document.querySelector('.event-workspace .module-bar');
+  const activeModule = moduleBar?.querySelector('[aria-current="page"]');
+  if (activeModule) {
+    if (window.matchMedia('(max-width: 960px)').matches) {
+      moduleBar.scrollLeft = activeModule.offsetLeft - moduleBar.offsetLeft;
+    } else {
+      const centerTop = Math.max(0, activeModule.offsetTop - (moduleBar.clientHeight - activeModule.offsetHeight) / 2);
+      const firstVisible = Array.from(moduleBar.children).reverse().find(item => item.offsetTop <= centerTop);
+      moduleBar.scrollTop = firstVisible?.offsetTop || 0;
+    }
+  }
   let dirty = false;
   document.querySelectorAll('input, textarea, select').forEach((el) => {
     el.addEventListener('change', () => { dirty = true; });

@@ -92,10 +92,10 @@ function eventHeader(event, activeKey, options = {}) {
     const loadLabel = load?.state === 'complete' ? 'Completa' : load?.state === 'warning' ? 'Completa con alerta' : 'Incompleta';
     const reviewLabel = { APROBADO: 'Aprobada', OBSERVADO: 'Observada', CARGADO: 'Sin revisar', PENDIENTE: 'Sin revisar' }[status];
     const icon = status === 'APROBADO' ? '✓' : status === 'OBSERVADO' ? '!' : load?.state === 'complete' ? '●' : '○';
-    return `<a class="module-pill ${activeKey === m.key ? 'active' : ''} ${status.toLowerCase()}" href="/events/${event.id}/modules/${m.key}">
+    return `<a class="module-pill ${activeKey === m.key ? 'active' : ''} ${status.toLowerCase()}" ${activeKey === m.key ? 'aria-current="page"' : ''} href="/events/${event.id}/modules/${m.key}">
       <span>${icon}</span><b>${esc(m.name)}</b><small class="module-state"><span class="load-${load?.state || 'incomplete'}">Carga: ${esc(loadLabel)}</span><span class="review-${status.toLowerCase()}">Revisión: ${esc(reviewLabel)}</span></small></a>`;
   }).join('');
-  return `<section class="event-head"><a href="${options.backHref || '/dashboard'}">← ${esc(options.backLabel || 'Mis eventos')}</a><h1>${esc(event.name)}</h1><p>${esc(event.artist)} · ${esc(event.venue)} · ${esc(event.city)}</p></section><nav class="module-bar">${overview}${pills}</nav>`;
+  return `<section class="event-head"><a href="${options.backHref || '/dashboard'}">← ${esc(options.backLabel || 'Mis eventos')}</a><h1>${esc(event.name)}</h1><p>${esc(event.artist)} · ${esc(event.venue)} · ${esc(event.city)}</p></section><nav class="module-bar" aria-label="Módulos del evento">${overview}${pills}</nav>`;
 }
 
 function table(headers, rows) {

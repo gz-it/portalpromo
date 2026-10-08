@@ -383,11 +383,12 @@ routes.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEv
   const producerReviewStatus = canEdit && key !== 'aceptacion'
     ? `<section class="producer-review-status ${currentStatus.toLowerCase()}"><div><small>Revisión administrativa</small><h2>${esc(producerStatusLabels[currentStatus] || currentStatus)}</h2><p>${latestReview?.new_status === currentStatus && latestReview.observation ? esc(latestReview.observation) : currentStatus === 'CARGADO' ? 'Hay información cargada, pero el administrador todavía no la aprobó.' : 'Todavía no hay comentarios del administrador.'}</p></div><span class="badge">${esc(reviewStatusLabel(currentStatus))}</span></section>`
     : '';
-  const historySection = canEdit ? '' : `<section class="panel"><h2>Historial</h2><ul class="history">${history || '<li>Sin movimientos.</li>'}</ul></section>`;
+  const historySection = canEdit ? '' : `<details class="module-history"><summary>Historial de revisiones</summary><ul class="history">${history || '<li>Sin movimientos.</li>'}</ul></details>`;
   const moduleChecklist = renderChecklist(req.event.id, key === 'aceptacion' ? eventChecklist.items.filter((item) => item.moduleKey !== 'aceptacion') : eventChecklist.items.filter((item) => item.moduleKey === key), key === 'aceptacion' ? 'Carga documental general' : 'Requisitos de carga del módulo');
   const moduleState = renderModuleState(eventChecklist, key, currentStatus);
   const headerOptions = isAdmin(req.user) ? { backHref:`/admin/events/${req.event.id}`, backLabel:'Resumen del expediente', overviewHref:`/admin/events/${req.event.id}` } : {};
-  res.send(layout(req, req.event.name, `${eventHeader(req.event, key, headerOptions)}${downloads}${moduleState}${moduleChecklist}${content}${dynamicEntries}<section class="files">${attachmentCards}</section>${historySection}${reviewPanel}${producerReviewStatus}`));
+  const documents = attachmentCards ? `<section class="dossier-section module-documents"><div class="section-heading"><h2>Documentos del módulo</h2><span>${files.rowCount} archivos</span></div><div class="files">${attachmentCards}</div></section>` : '';
+  res.send(layout(req, req.event.name, `<div class="event-workspace">${eventHeader(req.event, key, headerOptions)}<section class="module-content"><header class="module-heading"><div><small>Expediente del evento</small><h2>${esc(MODULES.find(module => module.key === key)?.name || key)}</h2></div>${downloads}</header>${moduleState}${moduleChecklist}${content}${documents}${dynamicEntries}${reviewPanel}${producerReviewStatus}${historySection}</section></div>`));
 });
 
 routes.post('/events/:eventId/modules/:moduleKey/entries', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), upload.single('file'), async (req, res) => {
