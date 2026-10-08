@@ -33,7 +33,7 @@ function layout(req, title, body, options = {}) {
     <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <title>${esc(title)} - ${esc(settings.portal_title || 'Portal de Productores')}</title>
     <link rel="stylesheet" href="/public/css/app.css">
-  </head><body>
+  </head><body${options.auth ? ' class="auth-page"' : ''}>
     ${nav}
     <main class="${options.narrow ? 'page narrow' : 'page'}">
       ${flash ? `<div class="toast ${flash.type || 'ok'}">${esc(flash.message)}</div>` : ''}
@@ -46,6 +46,9 @@ function layout(req, title, body, options = {}) {
 
 function authPage(req, mode = 'login') {
   const settings = req.app.locals.portalSettings || {};
+  const heading = settings.company_name === 'Portal de Productores - Estadio Huracán'
+    ? '<span>Portal de Productores</span><span class="auth-venue">Estadio Huracán</span>'
+    : esc(settings.company_name || 'Portal de Productores');
   const forms = {
     login: `<form method="post" action="/login" class="panel form-stack">
       <input type="hidden" name="_csrf" value="${req.csrfToken}">
@@ -75,10 +78,10 @@ function authPage(req, mode = 'login') {
     </form>`,
   };
   return layout(req, 'Acceso', `<section class="auth">
-    <div><div class="auth-mark">${settings.logo_attachment_id ? '<img src="/branding/logo" alt="Logo">' : 'PP'}</div>
-    <h1>${esc(settings.company_name || 'Portal de Productores')}</h1><p>${esc(settings.portal_title || 'Gestion documental de eventos')}</p></div>
+    <div class="auth-identity"><div class="auth-mark">${settings.logo_attachment_id ? '<img src="/branding/logo" alt="Logo">' : 'PP'}</div>
+    <h1>${heading}</h1>${settings.company_name && settings.company_name === settings.portal_title ? '' : `<p>${esc(settings.portal_title || 'Gestion documental de eventos')}</p>`}</div>
     ${forms[mode]}
-  </section>`, { narrow: true });
+  </section>`, { narrow: true, auth: true });
 }
 
 function eventHeader(event, activeKey, options = {}) {
