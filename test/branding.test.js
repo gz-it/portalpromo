@@ -18,8 +18,8 @@ test('header separates portal name and venue without changing navigation', () =>
 test('brand stays red while reading and positive states use neutral colors', () => {
   assert.match(css, /--primary:\s*#e30713;/);
   assert.match(css, /--ok:\s*#344054;/);
-  assert.match(css, /font-size:\s*17px; line-height:\s*1\.55;/);
-  assert.match(css, /\.module-pill small\s*\{[^}]*font-size:\s*15px;/);
+  assert.match(css, /font-size:\s*16px; line-height:\s*1\.5;/);
+  assert.match(css, /\.module-pill small\s*\{[^}]*font-size:\s*14px;/);
   const green = [...css.matchAll(/#([a-f\d]{6})\b/gi)].filter(([, hex]) => {
     const [r, g, b] = [0, 2, 4].map(i => parseInt(hex.slice(i, i + 2), 16));
     return g > r && g > b;
@@ -30,4 +30,15 @@ test('brand stays red while reading and positive states use neutral colors', () 
 test('native progress controls have neutral fills for Safari and Firefox', () => {
   assert.match(css, /progress::-webkit-progress-value\s*\{\s*background:\s*var\(--progress\)/);
   assert.match(css, /progress::-moz-progress-bar\s*\{\s*background:\s*var\(--progress\)/);
+});
+
+test('admin dashboard puts events before producer creation and settings', () => {
+  const app = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  const actions = app.slice(app.indexOf('aria-label="Acciones del administrador"'), app.indexOf('</nav></section>', app.indexOf('aria-label="Acciones del administrador"')));
+  assert.ok(actions.indexOf('href="/admin/events"') < actions.indexOf('href="/admin/reviews"'));
+  assert.ok(actions.indexOf('href="/admin/reviews"') < actions.indexOf('href="/admin/users"'));
+  assert.ok(actions.indexOf('href="/admin/users"') < actions.indexOf('href="/admin/settings"'));
+  assert.match(actions, /aria-label="Eventos y revisiones"/);
+  assert.match(actions, /aria-label="Gestión del portal"/);
+  assert.match(css, /\.dashboard-actions \.primary\s*\{ grid-column: 1 \/ -1;/);
 });
