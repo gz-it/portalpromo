@@ -74,5 +74,5 @@ test('staff template can be parsed and validates required fields', async () => {
 
 test('review notifications include status and optional comment', () => {
   assert.equal(reviewNotificationMessage('seguros', 'APROBADO'), 'Seguros fue marcado como APROBADO.');
-  assert.equal(reviewNotificationMessage('tecnica', 'OBSERVADO', 'Falta firma'), 'Produccion Tecnica fue marcado como OBSERVADO. Comentario: Falta firma');
+  assert.equal(reviewNotificationMessage('tecnica', 'OBSERVADO', 'Falta firma'), 'Producción técnica fue marcado como OBSERVADO. Comentario: Falta firma');
 });

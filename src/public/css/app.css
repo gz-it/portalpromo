@@ -239,10 +239,42 @@ input { accent-color: var(--primary); }
 .module-history { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 16px; color: var(--muted); font-size: 14px; }
 .module-history summary { cursor: pointer; }
 .module-history .history { margin-top: 14px; }
+.module-content { background: white; }
+.event-workspace .module-content { padding: 0 24px 28px; }
+.event-workspace .module-heading { padding-top: 18px; }
+.module-zone { padding: 24px 0 8px; border-top: 1px solid var(--line); }
+.zone-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+.zone-heading h2 { margin: 0; font-size: 20px; line-height: 1.35; font-weight: 700; color: var(--ink); }
+.zone-number { flex: 0 0 32px; height: 32px; display: grid; place-items: center; border-radius: 4px; background: #eef0f3; color: #344054; font-size: 13px; font-weight: 700; }
+.zone-producer .zone-number { background: #eaf1f9; color: #294968; }
+.zone-administration .zone-number { background: #fff2dd; color: #81530a; }
+.event-workspace .zone-status .module-state-summary { gap: 12px; border: 0; margin-bottom: 20px; background: transparent; }
+.event-workspace .zone-status .module-state-summary > div { padding: 16px; border: 1px solid #cad7e6; border-radius: 6px; background: #f0f5fb; }
+.event-workspace .zone-status .module-state-summary > div + div { padding: 16px; border: 1px solid #ecd9b6; background: #fff8ec; }
+.event-workspace .zone-status .module-state-summary > div.review-aprobado { background: #f3f4f6; border-color: #cbd0d8; }
+.event-workspace .zone-status .module-state-summary > div.review-observado { background: #fff2e8; border-color: #e2b99b; }
+.event-workspace .zone-status .module-state-summary strong { font-size: 20px; margin: 4px 0; }
+.module-zone .dossier-section { margin: 22px 0; }
+.module-requirements { margin: 16px 0 12px; font-size: 14px; }
+.module-requirements summary { cursor: pointer; color: var(--ink); }
+.module-requirements[open] summary { margin-bottom: 16px; }
+.event-workspace .module-zone .section-heading h2 { font-size: 18px; font-weight: 600; }
+.event-workspace .module-zone .panel:not(.file-card) { border: 0; border-radius: 0; box-shadow: none; padding: 18px 0; background: transparent; }
+.event-workspace .module-zone .panel + .panel { border-top: 1px solid var(--line); }
+.zone-producer .module-documents { border-top: 1px solid var(--line); padding-top: 18px; }
+.zone-administration .module-documents { margin-top: 0; }
+.event-workspace .zone-administration .review-panel { border-top: 1px solid #ecd9b6; margin-top: 24px; padding-top: 24px; }
+.event-workspace .admin-document { background: #fffaf1; border-color: #ecd9b6; border-left-color: #b88021; }
+.event-workspace .admin-document .file-source { color: #81530a; }
+.event-workspace .file-card:not(.admin-document) .file-source { color: #294968; }
+.event-workspace .module-pill.active b { font-weight: 700; }
+.event-workspace .module-pill.active { background: #fff1f2; border-color: #e4c4c7; }
+.event-workspace .module-pill.active > span { color: var(--primary-dark); }
 @media (max-width: 960px) {
   .event-workspace { grid-template-columns: minmax(0, 1fr); gap: 20px; }
   .event-workspace .module-bar { position: static; display: flex; max-height: none; overflow-x: auto; overflow-y: hidden; padding: 0 0 10px; border-right: 0; }
   .event-workspace .module-pill { width: 205px; min-width: 205px; }
+  .event-workspace .module-content { padding: 0 18px 24px; }
   .module-heading { align-items: flex-start; flex-direction: column; gap: 12px; }
   .module-heading .module-actions { justify-content: flex-start; }
 }
@@ -285,6 +317,9 @@ input { accent-color: var(--primary); }
   .checklist-item:nth-child(odd) { border-right: 0; }
   .event-workspace .module-state-summary > div + div { padding-left: 0; border-left: 0; }
   .event-workspace .review-panel { grid-template-columns: minmax(0, 1fr); }
+  .event-workspace .zone-status .module-state-summary > div + div { padding: 16px; }
+  .zone-heading { align-items: flex-start; }
+  .zone-heading h2 { font-size: 18px; }
 }
 @media (max-width: 480px) {
   .overview-facts { grid-template-columns: repeat(3, minmax(0, 1fr)); }

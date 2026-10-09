@@ -118,6 +118,16 @@ async function main() {
     await administrator.upload(`/admin/events/${eventId}/modules/seguros/documents`, 'Documento administrativo');
     const adminFile = (await db.query('select id from attachments where event_id=$1 and uploaded_by=$2', [eventId, admin.id])).rows[0];
     assert.equal((await producer.request(`/files/${adminFile.id}/view`)).status, 200);
+    const modulePage = (await producer.request(`/events/${eventId}/modules/seguros`)).text;
+    const administrationStart = modulePage.indexOf('class="module-zone zone-administration"');
+    assert.ok(administrationStart > modulePage.indexOf('class="module-zone zone-producer"'));
+    assert.ok(modulePage.indexOf(`/files/${adminFile.id}/view`) > administrationStart);
+    assert.match(modulePage, /Faltan datos/);
+    assert.match(modulePage, /Pendiente de revisión/);
+    assert.match(modulePage, /Tipo de seguro/);
+    assert.match(modulePage, /name="reference" type="date"/);
+    assert.match(modulePage, /Guardar archivo/);
+    console.log('PASS productor ve campos claros y documentos administrativos separados');
     console.log('PASS documento administrativo visible para el productor');
     const { createBackup } = require('../src/services/backups');
     const backup = await createBackup({ notify:false });

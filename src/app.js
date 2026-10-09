@@ -118,7 +118,9 @@ function renderModuleState(checklist, moduleKey, reviewStatus) {
     return `<section class="module-state-summary"><div><small>Carga documental general</small><strong>${checklist.document.percentage}% completa</strong><span>${checklist.document.missing} requisitos faltantes</span></div><div><small>Revisión administrativa</small><strong>${checklist.review.percentage}% aprobada</strong><span>${checklist.review.approved}/${checklist.review.total} módulos aprobados</span></div></section>`;
   }
   const load = checklist.modules[moduleKey] || { state: 'incomplete', complete: 0, total: 0 };
-  return `<section class="module-state-summary"><div class="load-${load.state}"><small>Carga del productor</small><strong>${loadStatusLabel(load)}</strong><span>${load.complete}/${load.total} requisitos completos</span></div><div class="review-${reviewStatus.toLowerCase()}"><small>Revisión administrativa</small><strong>${reviewStatusLabel(reviewStatus)}</strong><span>${reviewStatus === 'APROBADO' ? 'Conforme por administración' : reviewStatus === 'OBSERVADO' ? 'Requiere correcciones' : 'Todavía no fue aprobada'}</span></div></section>`;
+  const loadLabel = load.state === 'complete' ? 'Carga completa' : load.state === 'warning' ? 'Carga con alertas' : 'Faltan datos';
+  const reviewLabel = { APROBADO:'Aprobado', OBSERVADO:'Necesita correcciones', CARGADO:'Pendiente de revisión', PENDIENTE:'Pendiente de revisión' }[reviewStatus];
+  return `<section class="module-state-summary"><div class="load-${load.state}"><small>Información y archivos</small><strong>${loadLabel}</strong><span>${load.complete} de ${load.total} requisitos completos</span></div><div class="review-${reviewStatus.toLowerCase()}"><small>Aprobación del administrador</small><strong>${reviewLabel || esc(reviewStatus)}</strong><span>${reviewStatus === 'APROBADO' ? 'El administrador aprobó esta carga' : reviewStatus === 'OBSERVADO' ? 'Hay cambios solicitados por el administrador' : 'Esta carga todavía no está aprobada'}</span></div></section>`;
 }
 
 routes.get('/branding/logo', async (req, res) => {
@@ -322,8 +324,19 @@ routes.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEv
       tecnica: ['Rider Técnico','Audio','Iluminación','Pantallas / Video','Backline','Stage Plot','Hospitality','Catering','Otros'],
       sponsors: ['Sponsor','Acuerdo preexistente del Club'],
     }[key];
+    const itemFields = {
+      seguros: [null, 'Fecha de vencimiento (opcional)', ''],
+      habilitaciones: [null, 'Número de trámite o permiso (opcional)', 'Ej: EX-2026-123456'],
+      servicios: ['Nombre de la empresa o prestador (opcional)', null, ''],
+      prensa: [null, null, ''],
+      tecnica: [null, null, ''],
+      sponsors: ['Nombre de la marca', 'Referencia del acuerdo (opcional)', ''],
+    }[key];
+    const categoryLabel = { seguros:'Tipo de seguro', servicios:'Tipo de servicio', sponsors:'Tipo de acuerdo' }[key] || 'Tipo de documento';
+    const titleField = itemFields[0] ? `<label>${itemFields[0]}<input name="title" ${key === 'sponsors' ? 'required' : ''}></label>` : '';
+    const referenceField = itemFields[1] ? `<label>${itemFields[1]}<input name="reference" ${key === 'seguros' ? 'type="date"' : ''} placeholder="${itemFields[2]}"></label>` : '';
     content = canEdit ? `<form method="post" enctype="multipart/form-data" action="${action}" class="panel form-grid upload-form">
-      <label>Categoria<select name="category">${optionList(categories)}</select></label><label>Tipo / Marca / Prestador<input name="title"></label><label>Numero / Vigencia<input name="reference"></label><label class="span">Observacion<textarea name="observation"></textarea></label><label class="span">Archivo<input type="file" name="file" required></label><progress hidden max="100"></progress><button class="primary span">Guardar</button></form>` : '<section class="readonly-notice"><b>Vista de solo lectura</b><span>Documentacion cargada por el productor.</span></section>';
+      <label>${categoryLabel}<select name="category">${optionList(categories)}</select></label>${titleField}${referenceField}<label class="span">Comentario (opcional)<textarea name="observation"></textarea></label><label class="span">Archivo (obligatorio)<input type="file" name="file" required></label><progress hidden max="100"></progress><button class="primary span">Guardar archivo</button></form>` : '';
   } else if (key === 'comercial') {
     const ticketing = (await db.query('select * from ticketing where event_id=$1', [req.event.id])).rows[0] || {};
     const sectors = await db.query('select * from ticket_sectors where event_id=$1', [req.event.id]);
@@ -348,7 +361,7 @@ routes.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEv
     ${table(['Decisión','Comentario','Usuario','Fecha'], approvals.rows.map((a)=>`<tr><td>${esc(a.decision)}</td><td>${esc(a.comment)}</td><td>${esc(a.first_name)} ${esc(a.last_name)}</td><td>${esc(a.created_at)}</td></tr>`))}`;
     if (!isManager(req.user)) content = `<section class="readonly-details"><div><small>Ticketera</small><b>${esc(ticketing.ticketing_name || 'Sin completar')}</b></div><div><small>Link de venta</small><b>${ticketing.sales_url ? `<a target="_blank" href="${esc(ticketing.sales_url)}">Abrir enlace</a>` : 'Sin completar'}</b></div><div><small>Fecha</small><b>${esc(ticketing.sales_date || 'Sin completar')}</b></div><div><small>Observaciones</small><b>${esc(ticketing.sales_observations || 'Sin observaciones')}</b></div></section>${table(['Decisión','Comentario','Usuario','Fecha'], approvals.rows.map((a)=>`<tr><td>${esc(a.decision)}</td><td>${esc(a.comment)}</td><td>${esc(a.first_name)} ${esc(a.last_name)}</td><td>${esc(a.created_at)}</td></tr>`))}`;
   }
-  const attachmentCards = files.rows.map((f) => {
+  const renderAttachment = (f) => {
     const actions = [];
     if (canViewEventFile(req.user, f, req.event)) actions.push(`<a href="/files/${f.id}/view" target="_blank">Ver</a>`);
     if (canDownloadEventFile(req.user)) actions.push(`<a href="/files/${f.id}/download">Descargar</a>`);
@@ -357,14 +370,17 @@ routes.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEv
       : '';
     const source = f.uploaded_by_admin ? 'Documentación subida por administración' : 'Carga del productor';
     return `<article class="file-card ${f.uploaded_by_admin ? 'admin-document' : ''}"><span class="file-source">${source}</span><b>${esc(f.original_name)}</b><small>${esc(f.first_name)} ${esc(f.last_name)} · ${Math.round(f.size_bytes/1024)} KB</small>${actions.length ? `<div>${actions.join('')}</div>` : '<small>Archivo cargado</small>'}${deleteForm}</article>`;
-  }).join('');
-  const entryRows = moduleEntries.rows.map((entry) => {
+  };
+  const renderEntry = (entry) => {
     const canOpen = isAdmin(req.user) || isManager(req.user) || entry.created_by_admin;
     return `<tr><td><b>${esc(entry.label)}</b><br><small>${entry.created_by_admin ? 'Administración' : 'Productor'}</small></td><td>${esc(entry.value || '-')}</td><td>${esc(entry.observation || '-')}</td><td>${entry.attachment_id && canOpen ? `<a href="/files/${entry.attachment_id}/view" target="_blank">Ver archivo</a>` : entry.attachment_id ? 'Archivo cargado' : '-'}</td></tr>`;
-  });
+  };
+  const producerEntries = moduleEntries.rows.filter(entry => !entry.created_by_admin);
+  const administratorEntries = moduleEntries.rows.filter(entry => entry.created_by_admin);
   const producerEntryForm = canEdit && key !== 'aceptacion' ? `<details class="add-entry"><summary class="button">+ Agregar información</summary><form method="post" enctype="multipart/form-data" action="/events/${req.event.id}/modules/${key}/entries?_csrf=${req.csrfToken}" class="panel form-grid upload-form"><label>Nombre del dato<input name="label" required placeholder="Ej: Contacto de seguridad"></label><label>Información<input name="value" placeholder="Valor o detalle"></label><label class="span">Observación<textarea name="observation"></textarea></label><label class="span">Archivo opcional<input type="file" name="file"></label><progress hidden max="100"></progress><button class="primary span">Agregar al módulo</button></form></details>` : '';
   const adminDocumentForm = isAdmin(req.user) && key !== 'aceptacion' ? `<details class="add-entry"><summary class="button">+ Publicar documento para el productor</summary><form method="post" enctype="multipart/form-data" action="/admin/events/${req.event.id}/modules/${key}/documents?_csrf=${req.csrfToken}" class="panel form-grid upload-form"><label>Título<input name="label" required placeholder="Ej: Instructivo aprobado"></label><label>Detalle<input name="value"></label><label class="span">Comentario<textarea name="observation"></textarea></label><label class="span">Documento<input type="file" name="file" required></label><progress hidden max="100"></progress><button class="primary span">Publicar documento</button></form></details>` : '';
-  const dynamicEntries = key !== 'aceptacion' ? `<section class="dossier-section"><div class="section-heading"><h2>Información adicional</h2><span>${moduleEntries.rowCount} elementos</span></div>${producerEntryForm}${adminDocumentForm}${entryRows.length ? table(['Dato','Información','Observación','Archivo'], entryRows) : '<p class="empty">Todavía no se agregó información adicional.</p>'}</section>` : '';
+  const dynamicEntries = key !== 'aceptacion' && (canEdit || producerEntries.length) ? `<section class="dossier-section"><div class="section-heading"><h2>Otros datos</h2>${producerEntries.length ? `<span>${producerEntries.length} elementos</span>` : ''}</div>${producerEntryForm}${producerEntries.length ? table(['Dato','Información','Comentario','Archivo'], producerEntries.map(renderEntry)) : ''}</section>` : '';
+  const administratorData = administratorEntries.length ? `<section class="dossier-section"><div class="section-heading"><h2>Información publicada por administración</h2><span>${administratorEntries.length} elementos</span></div>${table(['Dato','Información','Observación','Archivo'], administratorEntries.map(renderEntry))}</section>` : '';
   const history = statusHistory.rows.map((h)=>`<li><b>${esc(h.new_status)}</b> ${esc(h.observation)} <small>${esc(h.created_at)}</small></li>`).join('');
   const downloads = isAdmin(req.user)
     ? `<div class="module-actions"><a href="/events/${req.event.id}/modules/${key}/pdf">Descargar PDF</a><a href="/events/${req.event.id}/zip">Descargar Todo</a></div>`
@@ -384,11 +400,19 @@ routes.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEv
     ? `<section class="producer-review-status ${currentStatus.toLowerCase()}"><div><small>Revisión administrativa</small><h2>${esc(producerStatusLabels[currentStatus] || currentStatus)}</h2><p>${latestReview?.new_status === currentStatus && latestReview.observation ? esc(latestReview.observation) : currentStatus === 'CARGADO' ? 'Hay información cargada, pero el administrador todavía no la aprobó.' : 'Todavía no hay comentarios del administrador.'}</p></div><span class="badge">${esc(reviewStatusLabel(currentStatus))}</span></section>`
     : '';
   const historySection = canEdit ? '' : `<details class="module-history"><summary>Historial de revisiones</summary><ul class="history">${history || '<li>Sin movimientos.</li>'}</ul></details>`;
-  const moduleChecklist = renderChecklist(req.event.id, key === 'aceptacion' ? eventChecklist.items.filter((item) => item.moduleKey !== 'aceptacion') : eventChecklist.items.filter((item) => item.moduleKey === key), key === 'aceptacion' ? 'Carga documental general' : 'Requisitos de carga del módulo');
+  const moduleItems = key === 'aceptacion' ? eventChecklist.items.filter(item => item.moduleKey !== 'aceptacion') : eventChecklist.items.filter(item => item.moduleKey === key);
+  const requiredSummary = summarizeChecklist(moduleItems);
+  const moduleChecklist = `<details class="module-requirements" ${requiredSummary.missing || requiredSummary.warnings ? 'open' : ''}><summary>Datos y archivos requeridos · ${requiredSummary.complete}/${requiredSummary.total} completos${requiredSummary.missing ? ` · ${requiredSummary.missing} faltantes` : ''}${requiredSummary.warnings ? ` · ${requiredSummary.warnings} alertas` : ''}</summary>${renderChecklist(req.event.id, moduleItems, key === 'aceptacion' ? 'Carga de todos los módulos' : 'Datos y archivos requeridos')}</details>`;
   const moduleState = renderModuleState(eventChecklist, key, currentStatus);
   const headerOptions = isAdmin(req.user) ? { backHref:`/admin/events/${req.event.id}`, backLabel:'Resumen del expediente', overviewHref:`/admin/events/${req.event.id}` } : {};
-  const documents = attachmentCards ? `<section class="dossier-section module-documents"><div class="section-heading"><h2>Documentos del módulo</h2><span>${files.rowCount} archivos</span></div><div class="files">${attachmentCards}</div></section>` : '';
-  res.send(layout(req, req.event.name, `<div class="event-workspace">${eventHeader(req.event, key, headerOptions)}<section class="module-content"><header class="module-heading"><div><small>Expediente del evento</small><h2>${esc(MODULES.find(module => module.key === key)?.name || key)}</h2></div>${downloads}</header>${moduleState}${moduleChecklist}${content}${documents}${dynamicEntries}${reviewPanel}${producerReviewStatus}${historySection}</section></div>`));
+  const producerFiles = files.rows.filter(file => !file.uploaded_by_admin);
+  const administratorFiles = files.rows.filter(file => file.uploaded_by_admin);
+  const documents = `<section class="dossier-section module-documents"><div class="section-heading"><h2>Archivos del productor</h2><span>${producerFiles.length} ${producerFiles.length === 1 ? 'archivo' : 'archivos'}</span></div>${producerFiles.length ? `<div class="files">${producerFiles.map(renderAttachment).join('')}</div>` : '<p class="empty">No hay archivos cargados por el productor.</p>'}</section>`;
+  const administratorDocuments = key !== 'aceptacion' && (administratorFiles.length || adminDocumentForm) ? `<section class="dossier-section module-documents"><div class="section-heading"><h2>Documentación publicada por administración</h2><span>${administratorFiles.length} ${administratorFiles.length === 1 ? 'archivo' : 'archivos'}</span></div>${administratorFiles.length ? `<div class="files">${administratorFiles.map(renderAttachment).join('')}</div>` : ''}${adminDocumentForm}</section>` : '';
+  const statusZone = `<section class="module-zone zone-status" aria-labelledby="module-status-heading"><header class="zone-heading"><span class="zone-number" aria-hidden="true">01</span><h2 id="module-status-heading">Estado del módulo</h2></header>${moduleState}${moduleChecklist}</section>`;
+  const producerZone = `<section class="module-zone zone-producer" aria-labelledby="module-producer-heading"><header class="zone-heading"><span class="zone-number" aria-hidden="true">02</span><h2 id="module-producer-heading">${key === 'aceptacion' ? 'Resumen del expediente' : canEdit ? 'Tu información y archivos' : 'Contenido del productor'}</h2></header>${content}${key === 'aceptacion' ? '' : documents}${dynamicEntries}</section>`;
+  const administrationZone = key !== 'aceptacion' ? `<section class="module-zone zone-administration" aria-labelledby="module-administration-heading"><header class="zone-heading"><span class="zone-number" aria-hidden="true">03</span><h2 id="module-administration-heading">${canReviewEventContent(req.user) ? 'Revisar y responder' : 'Respuesta del administrador'}</h2></header>${reviewPanel}${producerReviewStatus}${administratorDocuments}${administratorData}${historySection}</section>` : '';
+  res.send(layout(req, req.event.name, `<div class="event-workspace">${eventHeader(req.event, key, headerOptions)}<section class="module-content"><header class="module-heading"><div><small>Expediente del evento</small><h2>${esc(MODULES.find(module => module.key === key)?.name || key)}</h2></div>${downloads}</header>${statusZone}${producerZone}${administrationZone}</section></div>`));
 });
 
 routes.post('/events/:eventId/modules/:moduleKey/entries', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), upload.single('file'), async (req, res) => {
