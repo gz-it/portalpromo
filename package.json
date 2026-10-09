@@ -22,24 +22,24 @@
     "archiver": "^7.0.1",
     "bcryptjs": "^2.4.3",
     "connect-pg-simple": "^9.0.1",
-    "cookie-parser": "^1.4.6",
-    "csv-parse": "^5.5.6",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "express-rate-limit": "^7.4.0",
-    "express-session": "^1.18.0",
-    "helmet": "^7.1.0",
-    "mime-types": "^2.1.35",
-    "multer": "^2.2.0",
-    "nodemailer": "^9.0.5",
-    "pdfkit": "^0.15.0",
-    "pg": "^8.12.0",
-    "sanitize-filename": "^1.6.3",
+    "cookie-parser": "^1.4.7",
+    "csv-parse": "^7.0.3",
+    "dotenv": "^16.6.1",
     "exceljs": "^4.4.0",
-    "zod": "^3.23.8"
+    "express": "^4.22.3",
+    "express-rate-limit": "^7.5.1",
+    "express-session": "^1.19.0",
+    "helmet": "^7.2.0",
+    "mime-types": "^2.1.35",
+    "multer": "^2.4.0",
+    "nodemailer": "^10.0.16",
+    "pdfkit": "^0.15.2",
+    "pg": "^8.23.1",
+    "sanitize-filename": "^1.6.4",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
-    "supertest": "^7.0.0"
+    "supertest": "^7.3.1"
   },
   "overrides": {
     "uuid": "11.1.1"

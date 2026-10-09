@@ -64,7 +64,7 @@ async function main() {
           }
           const text = await response.text();
           token = text.match(/name="_csrf" value="([^"]+)"/)?.[1] || token;
-          return { status: response.status, location: response.headers.get('location'), text };
+          return { status: response.status, location: response.headers.get('location'), headers: response.headers, text };
         },
         async post(route, body) {
           return this.request(route, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...body, _csrf: token }) });
@@ -83,6 +83,17 @@ async function main() {
     const adminDashboard = await administrator.request('/admin');
     assert.equal(adminDashboard.status, 200);
     assert.match(adminDashboard.text, /href="\/admin\/reviews">Revisiones pendientes/);
+    assert.match(adminDashboard.headers.get('content-security-policy'), /script-src 'self' 'nonce-/);
+    assert.match(adminDashboard.headers.get('cache-control'), /no-store/);
+    assert.equal((await administrator.post('/admin/updates/run', {})).status, 403);
+    assert.equal((await administrator.post('/admin/updates/check', {})).status, 403);
+    assert.equal((await administrator.request('/admin/settings/account', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'first_name=SinToken' })).status, 403);
+    for (const section of ['cuenta', 'portal', 'notificaciones']) {
+      const page = await administrator.request(`/admin/settings?section=${section}`);
+      assert.equal(page.status, 200);
+      assert.match(page.text, /aria-label="Secciones de configuración"/);
+      assert.doesNotMatch(page.text, /action="\/admin\/updates\/run"/);
+    }
     for (const route of ['/admin/events', '/admin/reviews', '/admin/users', '/admin/settings', '/admin/reviews?status=CARGADO', '/admin/reviews?status=OBSERVADO']) {
       const page = await administrator.request(route);
       assert.equal(page.status, 200);
@@ -97,6 +108,7 @@ async function main() {
     const producer = session(); await producer.request(`/invitation/${token}`);
     await producer.post(`/invitation/${token}`, { password, confirm_password:password });
     assert.equal((await producer.login('producer@example.invalid')).location, '/dashboard');
+    await producer.request('/dashboard');
     const { acceptInvitation } = require('../src/services/invitations');
     assert.equal(await acceptInvitation(token, password), null);
     console.log('PASS invitacion, activacion por clave propia y token de un solo uso (correo simulado)');
@@ -192,6 +204,20 @@ async function main() {
     assert.equal((await administrator.request('/files/not-a-uuid/download')).status, 400);
     assert.equal((await administrator.request('/health')).status, 200);
     console.log('PASS identificadores invalidos responden sin detener el portal');
+    await administrator.request('/admin/users');
+    assert.equal((await administrator.post(`/admin/users/${admin.id}/role`, { role: 'PRODUCTOR' })).status, 400);
+    assert.equal((await administrator.post(`/admin/users/${admin.id}/status`, { status: 'BLOQUEADO' })).status, 400);
+    const attacker = session();
+    await attacker.request('/login');
+    const originalCookie = attacker.cookie();
+    assert.equal((await attacker.post('/login', { login: 'admin@example.invalid', password })).status, 302);
+    assert.notEqual(attacker.cookie(), originalCookie, 'El login debe rotar la sesion');
+    await attacker.request('/login');
+    let limited;
+    for (let attempt = 0; attempt < 21; attempt++) limited = await attacker.post('/login', { login: 'nonexistent@example.invalid', password: 'incorrect' });
+    assert.equal(limited.status, 429);
+    assert.equal((await administrator.request('/health')).status, 200);
+    console.log('PASS seguridad: CSRF, CSP, limites de login, rotacion de sesion y proteccion de cuenta propia');
   } finally {
     if (server) await new Promise(resolve => server.close(resolve));
     if (db) await db.pool.end();

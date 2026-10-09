@@ -13,7 +13,7 @@ async function sendInvitation(user) {
 }
 
 async function acceptInvitation(token, password) {
-  if (typeof password !== 'string' || password.length < 8) throw new Error('La contraseña debe tener al menos 8 caracteres.');
+  if (typeof password !== 'string' || password.length < 12 || Buffer.byteLength(password) > 72) throw new Error('La contraseña debe tener al menos 12 caracteres y no superar 72 bytes.');
   const passwordHash = await hashPassword(password);
   return db.tx(async (client) => {
     const invite = (await client.query(`select t.id,t.user_id from user_invitation_tokens t

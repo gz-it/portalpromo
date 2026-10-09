@@ -1,0 +1,37 @@
+PORTAL DE PRODUCTORES - REVISION 2026-10-08
+
+Protecciones aplicadas
+- Produccion escucha solo en 127.0.0.1, detras de Nginx y HTTPS.
+- Sesiones PostgreSQL, cookie Secure/HttpOnly/SameSite, rotacion al login.
+- Cambio de clave invalida otras sesiones; recuperacion consume todos los tokens.
+- CSRF en escrituras, CSP con nonce, respuestas privadas sin cache.
+- Limites de login, recuperacion, body y multipart.
+- Acceso a archivos por evento y rol; containment de rutas y firmas basicas.
+- Actualizaciones restringidas a Sistemas; bloqueo de auto-desactivacion/cambio de rol.
+- Dependencias productivas auditadas con pnpm: sin avisos al momento de esta revision.
+
+VPS de prueba
+- UFW activo: permite TCP 22,5153,80,443,3355; otras entradas bloqueadas.
+- Fail2ban SSH: 5 intentos en 10 minutos, bloqueo por una hora.
+- El puerto 3355 y el servicio CCTV permanecen sin cambios.
+- Conserva SSH por contrasena y cuentas de prueba por decision del propietario.
+- Configuracion Fail2ban reproducible: deploy/fail2ban-portal.conf.
+
+Pendientes antes del uso real
+- Rotar claves expuestas/de prueba y deshabilitar acceso SSH por contrasena.
+- Evaluar 2FA y acceso administrativo mediante VPN o restriccion de IP.
+- Antivirus bloqueante para uploads: no instalado; el VPS tiene 1 GB RAM.
+  La verificacion de firmas NO detecta malware ni valida completamente Office/PDF.
+- Backup completo automatico externo y monitorizacion de recuperacion/renovacion TLS.
+- Configurar SMTP; no se han enviado correos reales en esta revision.
+- Parametrizacion de colores, requisitos, plazos y preferencias de avisos no incluida.
+
+Verificacion
+- node --test
+- pnpm audit --prod
+- Como root en VPS: node -r dotenv/config scripts/review-sandbox.js dotenv_config_path=/etc/portalpromo.env
+  Crea bases temporales; no restaura ni borra la base real.
+- ss -lntp, ufw status verbose, fail2ban-client status sshd.
+
+No es una certificacion de seguridad ni una garantia de invulnerabilidad.
+No se hicieron ataques de saturacion ni un pentest externo independiente.

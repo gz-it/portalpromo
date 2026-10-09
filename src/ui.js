@@ -57,7 +57,7 @@ function layout(req, title, body, options = {}) {
       ${returnLink}
       ${body}
     </main>
-    <script>window.csrfToken=${JSON.stringify(req.csrfToken || '')}</script>
+    <script nonce="${esc(req.res?.locals?.cspNonce || '')}">window.csrfToken=${JSON.stringify(req.csrfToken || '')}</script>
     <script src="/public/js/app.js"></script>
   </body></html>`;
 }
@@ -78,8 +78,8 @@ function authPage(req, mode = 'login') {
     register: `<form method="post" action="/register" class="panel form-grid">
       <input type="hidden" name="_csrf" value="${req.csrfToken}">
       ${['Nombre:first_name','Apellido:last_name','Email:email','Teléfono:phone'].map((x) => { const [l,n]=x.split(':'); return `<label>${l}<input name="${n}" type="${n === 'email' ? 'email' : 'text'}" required></label>`; }).join('')}
-      <label>Contraseña<input name="password" type="password" required minlength="8"></label>
-      <label>Confirmar contraseña<input name="confirm_password" type="password" required minlength="8"></label>
+      <label>Contraseña<input name="password" type="password" required minlength="12"></label>
+      <label>Confirmar contraseña<input name="confirm_password" type="password" required minlength="12"></label>
       <button class="primary span">Crear cuenta</button><p class="span"><a href="/login">Ya tengo cuenta</a></p>
     </form>`,
     verification: `<form method="post" action="/resend-verification" class="panel form-stack">

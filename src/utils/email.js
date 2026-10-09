@@ -77,6 +77,9 @@ async function getTransporter() {
       host: settings.host,
       port: settings.port,
       secure: settings.secure,
+      requireTLS: !settings.secure,
+      connectionTimeout: 15000,
+      socketTimeout: 30000,
       auth: { user: settings.user, pass: settings.password },
     });
     transporterKey = key;

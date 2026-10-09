@@ -42,5 +42,8 @@ const config = {
 if (!config.databaseUrl && config.env !== 'test') {
   console.warn('DATABASE_URL no configurado. Configure PostgreSQL antes de iniciar en desarrollo/produccion.');
 }
+if (config.env === 'production' && (config.sessionSecret === 'dev-only-change-me' || config.sessionSecret.length < 32)) {
+  throw new Error('SESSION_SECRET debe ser un secreto de al menos 32 caracteres.');
+}
 
 module.exports = config;

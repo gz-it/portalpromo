@@ -1,4 +1,5 @@
 const fs = require('fs');
+const crypto = require('crypto');
 const path = require('path');
 const express = require('express');
 const session = require('express-session');
@@ -52,11 +53,21 @@ const {
 const app = express();
 const { safeRoutes, errorHandler } = require('./middleware/safe-routes');
 const routes = safeRoutes(app);
-app.set('trust proxy', 1);
-routes.use(helmet({ contentSecurityPolicy: false }));
+app.disable('x-powered-by');
+app.set('trust proxy', 'loopback');
+routes.use((req, res, next) => {
+  res.locals.cspNonce = crypto.randomBytes(24).toString('base64');
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
+routes.use(helmet({ contentSecurityPolicy: { directives: {
+  scriptSrc: ["'self'", (req, res) => `'nonce-${res.locals.cspNonce}'`],
+  objectSrc: ["'none'"], frameAncestors: ["'none'"],
+  formAction: ["'self'"], upgradeInsecureRequests: config.env === 'production' ? [] : null,
+} } }));
 routes.use('/public', express.static(path.join(__dirname, 'public')));
-routes.use(express.urlencoded({ extended: true }));
-routes.use(express.json());
+routes.use(express.urlencoded({ extended: true, limit: '100kb', parameterLimit: 500 }));
+routes.use(express.json({ limit: '100kb' }));
 routes.use(cookieParser());
 routes.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 500 }));
 routes.use(session({
@@ -89,7 +100,7 @@ function flash(req, type, message) {
 
 function parseBody(schema, body) {
   const parsed = schema.safeParse(body);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (!parsed.success) throw Object.assign(new Error(parsed.error.issues[0].message), { status: 400 });
   return parsed.data;
 }
 
@@ -166,7 +177,8 @@ routes.post('/resend-verification', rateLimit({ windowMs: 15 * 60 * 1000, limit:
   res.redirect('/login');
 });
 
-routes.post('/login', async (req, res) => {
+routes.post('/login', rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false }), async (req, res) => {
+  if (typeof req.body.login !== 'string' || req.body.login.length > 254 || typeof req.body.password !== 'string' || Buffer.byteLength(req.body.password) > 72) return res.status(400).send('Credenciales invalidas');
   const result = await db.query(
     `select u.*, array_remove(array_agg(r.name), null) roles from users u
      left join user_roles ur on ur.user_id=u.id left join roles r on r.id=ur.role_id
@@ -190,6 +202,7 @@ routes.post('/login', async (req, res) => {
     flash(req, 'error', 'Confirmá tu email antes de ingresar. Podés reenviar la confirmación.');
     return res.redirect('/login');
   }
+  await new Promise((resolve, reject) => req.session.regenerate(error => error ? reject(error) : resolve()));
   req.session.userId = user.id;
   await audit(user.id, 'login', 'users', user.id);
   res.redirect('/dashboard');
@@ -200,7 +213,7 @@ routes.post('/logout', requireLogin, async (req, res) => {
   req.session.destroy(() => res.redirect('/login'));
 });
 
-routes.post('/forgot', async (req, res) => {
+routes.post('/forgot', rateLimit({ windowMs: 60 * 60 * 1000, limit: 5 }), async (req, res) => {
   const user = (await db.query('select * from users where email=$1', [req.body.email])).rows[0];
   if (user) {
     const token = makeToken();
@@ -212,21 +225,28 @@ routes.post('/forgot', async (req, res) => {
 });
 
 routes.get('/reset/:token', (req, res) => res.send(layout(req, 'Cambiar contrasena', `<form method="post" class="panel form-stack">
-  <input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Nueva contraseña<input type="password" name="password" required minlength="8"></label><button class="primary">Cambiar</button></form>`, { narrow: true })));
+  <input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Nueva contraseña<input type="password" name="password" required minlength="12"></label><button class="primary">Cambiar</button></form>`, { narrow: true })));
 
-routes.post('/reset/:token', async (req, res) => {
+routes.post('/reset/:token', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }), async (req, res) => {
+  if (typeof req.body.password !== 'string' || req.body.password.length < 12 || Buffer.byteLength(req.body.password) > 72) {
+    return res.status(400).send('La contraseña debe tener al menos 12 caracteres y no superar 72 bytes.');
+  }
   const tokenHash = hashToken(req.params.token);
-  const row = (await db.query('select * from password_reset_tokens where token_hash=$1 and used_at is null and expires_at>now()', [tokenHash])).rows[0];
-  if (!row) { flash(req, 'error', 'Token invalido o vencido'); return res.redirect('/forgot'); }
-  await db.tx(async (client) => {
-    await client.query('update users set password_hash=$1, updated_at=now() where id=$2', [await hashPassword(req.body.password), row.user_id]);
-    await client.query('update password_reset_tokens set used_at=now() where id=$1', [row.id]);
+  const passwordHash = await hashPassword(req.body.password);
+  const changed = await db.tx(async (client) => {
+    const row = (await client.query('select * from password_reset_tokens where token_hash=$1 and used_at is null and expires_at>now() for update', [tokenHash])).rows[0];
+    if (!row) return false;
+    await client.query('update users set password_hash=$1, updated_at=now() where id=$2', [passwordHash, row.user_id]);
+    await client.query('update password_reset_tokens set used_at=now() where user_id=$1 and used_at is null', [row.user_id]);
+    await client.query('delete from session where sess->>\'userId\'=$1', [row.user_id]);
+    return true;
   });
+  if (!changed) { flash(req, 'error', 'Token invalido o vencido'); return res.redirect('/forgot'); }
   flash(req, 'ok', 'Contrasena actualizada.');
   res.redirect('/login');
 });
 
-routes.get('/invitation/:token', (req, res) => res.send(layout(req, 'Crear contraseña', `<form method="post" class="panel form-stack"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h1>Crear contraseña</h1><label>Contraseña<input name="password" type="password" minlength="8" required autocomplete="new-password"></label><label>Confirmar contraseña<input name="confirm_password" type="password" minlength="8" required autocomplete="new-password"></label><button class="primary">Activar mi acceso</button></form>`, { narrow: true })));
+routes.get('/invitation/:token', (req, res) => res.send(layout(req, 'Crear contraseña', `<form method="post" class="panel form-stack"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h1>Crear contraseña</h1><label>Contraseña<input name="password" type="password" minlength="12" required autocomplete="new-password"></label><label>Confirmar contraseña<input name="confirm_password" type="password" minlength="12" required autocomplete="new-password"></label><button class="primary">Activar mi acceso</button></form>`, { narrow: true })));
 routes.post('/invitation/:token', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }), async (req, res) => {
   try {
     const values = parseBody(z.object({ password:z.string().min(8), confirm_password:z.string() }).refine((value) => value.password === value.confirm_password, 'Las contraseñas no coinciden.'), req.body);
@@ -571,7 +591,7 @@ routes.get('/events/:eventId/modules/:moduleKey/pdf', requireLogin, loadAuthoriz
 });
 
 routes.get('/events/:eventId/zip', requireLogin, loadAuthorizedEvent, requireRole(ROLES.ADMIN), async (req, res) => {
-  res.setHeader('Content-Disposition', `attachment; filename="${req.event.name}.zip"`);
+  res.attachment(`${req.event.name}.zip`);
   res.type('application/zip');
   await streamEventZip(res, req.event, app.locals.portalSettings);
 });
@@ -588,7 +608,8 @@ routes.get('/files/:id/:mode(view|download)', requireLogin, async (req, res) => 
     if (req.params.mode === 'view' && !canViewEventFile(req.user, file, req.event)) return res.status(403).send('Acceso denegado');
   } else if (!isAdmin(req.user)) return res.status(403).send('Acceso denegado');
   const target = resolveAttachment(file);
-  res.setHeader('Content-Disposition', `${req.params.mode === 'download' ? 'attachment' : 'inline'}; filename="${file.original_name}"`);
+  res.attachment(file.original_name);
+  if (req.params.mode === 'view') res.setHeader('Content-Disposition', res.getHeader('Content-Disposition').replace(/^attachment/, 'inline'));
   res.type(file.mime_type);
   fs.createReadStream(target).pipe(res);
 });
@@ -715,6 +736,7 @@ routes.post('/admin/users/:id/invitation', requireLogin, requireRole(ROLES.ADMIN
 });
 
 routes.post('/admin/users/:id/status', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+  if (req.params.id === req.user.id && req.body.status !== 'ACTIVO') return res.status(400).send('No puede desactivar su propia cuenta.');
   const status = parseBody(z.enum(['PENDIENTE','ACTIVO','BLOQUEADO','DESHABILITADO']), req.body.status);
   const user = (await db.query('select * from users where id=$1', [req.params.id])).rows[0];
   if (!user) return res.status(404).send('Usuario no encontrado');
@@ -731,6 +753,8 @@ routes.post('/admin/users/:id/status', requireLogin, requireRole(ROLES.ADMIN), a
 });
 
 routes.post('/admin/users/:id/role', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+  if (req.params.id === req.user.id) return res.status(400).send('No puede modificar su propio rol.');
+  parseBody(z.enum(Object.values(ROLES)), req.body.role);
   await db.tx(async (client) => {
     await client.query('delete from user_roles where user_id=$1', [req.params.id]);
     await client.query('insert into user_roles (user_id, role_id) select $1, id from roles where name=$2', [req.params.id, req.body.role]);
@@ -856,24 +880,36 @@ routes.get('/admin/reviews', requireLogin, requireRole(ROLES.ADMIN), async (req,
 });
 
 routes.get('/admin/settings', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
-  const version = fs.readFileSync(path.join(config.root, 'VERSION'), 'utf8').trim();
-  const updates = await db.query('select * from system_updates order by started_at desc limit 1');
-  res.send(layout(req, 'Configuracion', `<section class="toolbar"><div><h1>Configuración</h1><p>Cuenta administrativa, identidad del portal y mantenimiento.</p></div></section><div class="settings-stack">
-  <form method="post" action="/admin/settings/account" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2 class="span">Mi cuenta</h2><label>Nombre<input name="first_name" value="${esc(req.user.first_name)}" required></label><label>Apellido<input name="last_name" value="${esc(req.user.last_name)}" required></label><label>Teléfono<input name="phone" value="${esc(req.user.phone)}"></label><label>Email<input name="email" type="email" value="${esc(req.user.email)}" required></label><label class="span">Nueva contraseña<input name="password" type="password" minlength="8" placeholder="Dejar vacío para conservar la actual"></label><button class="primary span">Guardar cuenta</button></form>
-  <form method="post" action="/admin/settings/identity?_csrf=${req.csrfToken}" enctype="multipart/form-data" class="panel form-grid upload-form"><h2 class="span">Identidad del portal</h2><label>Nombre de Empresa<input name="company_name" value="${esc(app.locals.portalSettings.company_name)}"></label><label>Título del Portal<input name="portal_title" value="${esc(app.locals.portalSettings.portal_title)}"></label><label class="span">Logo<input type="file" name="file" accept="image/*"></label><progress hidden max="100"></progress><button class="primary span">Guardar identidad</button></form>
-  <section class="panel"><h2>Actualizaciones</h2><p>Versión actual: ${esc(version)}</p><p>Último resultado: ${esc(updates.rows[0]?.status || 'Sin ejecuciones')}</p><form method="post" action="/admin/updates/check"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Buscar actualización</button></form><form method="post" action="/admin/updates/run"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button class="primary">Actualizar sistema</button></form></section></div>`));
+  const section = ['cuenta', 'portal', 'notificaciones'].includes(req.query.section) ? req.query.section : 'cuenta';
+  const mail = section === 'notificaciones' ? await getMailSettings() : null;
+  const tabs = [['cuenta', 'Mi cuenta'], ['portal', 'Portal'], ['notificaciones', 'Notificaciones']].map(([key, name]) => `<a class="button ${section === key ? 'primary' : ''}" ${section === key ? 'aria-current="page"' : ''} href="/admin/settings?section=${key}">${name}</a>`).join('');
+  res.send(layout(req, 'Configuracion', `<section class="toolbar"><div><h1>Configuración</h1><p>Cuenta e identidad del portal.</p></div><nav class="row-actions" aria-label="Secciones de configuración">${tabs}</nav></section><div class="settings-stack">
+  ${section === 'cuenta' ? `
+  <form method="post" action="/admin/settings/account" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2 class="span">Mi cuenta</h2><label>Nombre<input name="first_name" value="${esc(req.user.first_name)}" required></label><label>Apellido<input name="last_name" value="${esc(req.user.last_name)}" required></label><label>Teléfono<input name="phone" value="${esc(req.user.phone)}"></label><label>Email<input name="email" type="email" value="${esc(req.user.email)}" required></label><label class="span">Nueva contraseña<input name="password" type="password" minlength="12" placeholder="Dejar vacío para conservar la actual"></label><button class="primary span">Guardar cuenta</button></form>
+  ` : section === 'portal' ? `
+  <form method="post" action="/admin/settings/identity?_csrf=${req.csrfToken}" enctype="multipart/form-data" class="panel form-grid upload-form"><h2 class="span">Identidad del portal</h2><label>Nombre de Empresa<input name="company_name" value="${esc(app.locals.portalSettings.company_name)}"></label><label>Título del Portal<input name="portal_title" value="${esc(app.locals.portalSettings.portal_title)}"></label><label class="span">Logo<input type="file" name="file" accept="image/png,image/jpeg,image/webp"></label><progress hidden max="100"></progress><button class="primary span">Guardar identidad</button></form>
+  ` : `<section class="dossier-section"><h2>Correo de notificaciones</h2><p>Envío: <b>${mail.host && mail.user && mail.password ? 'Configurado' : 'Pendiente de configurar en Sistemas'}</b></p><p>Destinatario de tus avisos: <b>${esc(req.user.email)}</b></p><a class="button" href="/admin/settings?section=cuenta">Modificar mi email</a><a class="button" href="/notifications">Ver notificaciones</a></section>`}</div>`));
 });
 
 routes.post('/admin/settings/account', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
-  const account = parseBody(z.object({ first_name:z.string().min(1), last_name:z.string().min(1), phone:z.string().optional(), email:z.string().email(), password:z.string().optional() }), req.body);
+  const account = parseBody(z.object({ first_name:z.string().min(1), last_name:z.string().min(1), phone:z.string().optional(), email:z.string().email(), password:z.union([z.literal(''), z.string().min(12).refine(value => Buffer.byteLength(value) <= 72)]).optional() }), req.body);
   if (account.password) await db.query('update users set first_name=$1,last_name=$2,phone=$3,email=$4,password_hash=$5,updated_at=now() where id=$6', [account.first_name, account.last_name, account.phone, account.email, await hashPassword(account.password), req.user.id]);
   else await db.query('update users set first_name=$1,last_name=$2,phone=$3,email=$4,updated_at=now() where id=$5', [account.first_name, account.last_name, account.phone, account.email, req.user.id]);
   await audit(req.user.id, 'actualizar_cuenta_admin', 'users', req.user.id);
+  if (account.password) {
+    await db.query('delete from session where sess->>\'userId\'=$1 and sid<>$2', [req.user.id, req.sessionID]);
+    await new Promise((resolve, reject) => req.session.regenerate(error => error ? reject(error) : resolve()));
+    req.session.userId = req.user.id;
+  }
   flash(req, 'ok', 'Cuenta administrativa actualizada.');
   res.redirect('/admin/settings');
 });
 
 routes.post('/admin/settings/identity', requireLogin, requireRole(ROLES.ADMIN), upload.single('file'), async (req, res) => {
+  if (req.file && !['image/png', 'image/jpeg', 'image/webp'].includes(req.file.mimetype)) {
+    fs.unlinkSync(req.file.path);
+    return res.status(400).send('El logo debe ser PNG, JPEG o WebP.');
+  }
   await setSetting('company_name', req.body.company_name, req.user.id);
   await setSetting('portal_title', req.body.portal_title, req.user.id);
   if (req.file) {
@@ -882,24 +918,25 @@ routes.post('/admin/settings/identity', requireLogin, requireRole(ROLES.ADMIN), 
   }
   await loadSettings(app);
   await audit(req.user.id, 'cambiar_identidad', 'system_settings', 'identity');
-  res.redirect('/admin/settings');
+  res.redirect('/admin/settings?section=portal');
 });
 
-routes.post('/admin/updates/check', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.post('/admin/updates/check', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
   await db.query('insert into system_updates (status,current_version,available_version,started_by,log,finished_at) values ($1,$2,$3,$4,$5,now())', ['CHECKED', fs.readFileSync(path.join(config.root, 'VERSION'), 'utf8').trim(), 'Verificar repositorio remoto configurado', req.user.id, 'Chequeo registrado.']);
-  res.redirect('/admin/settings');
+  res.redirect('/systems');
 });
 
-routes.post('/admin/updates/run', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.post('/admin/updates/run', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
   const running = await db.query("select 1 from system_updates where status='RUNNING' and finished_at is null");
-  if (running.rowCount) { flash(req, 'error', 'Ya existe una actualización en ejecución.'); return res.redirect('/admin/settings'); }
+  if (running.rowCount) { flash(req, 'error', 'Ya existe una actualización en ejecución.'); return res.redirect('/systems'); }
   const row = await db.query('insert into system_updates (status,current_version,started_by,log) values ($1,$2,$3,$4) returning id', ['RUNNING', fs.readFileSync(path.join(config.root, 'VERSION'), 'utf8').trim(), req.user.id, 'Ejecute npm run update en el servidor para correr el flujo controlado.']);
   await audit(req.user.id, 'solicitar_actualizacion', 'system_updates', row.rows[0].id);
   flash(req, 'ok', 'Actualización registrada. El flujo seguro se ejecuta con el script documentado del servidor.');
-  res.redirect('/admin/settings');
+  res.redirect('/systems');
 });
 
 routes.get('/systems', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
+  const version = fs.readFileSync(path.join(config.root, 'VERSION'), 'utf8').trim();
   const [mail, backup, backups] = await Promise.all([
     getMailSettings(),
     getBackupSettings(),
@@ -908,7 +945,7 @@ routes.get('/systems', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res
   const weekdayNames = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
   const weekdayOptions = (selected) => weekdayNames.map((name, index) => `<option value="${index}" ${index === selected ? 'selected' : ''}>${name}</option>`).join('');
   const backupRows = backups.rows.map((row) => `<tr><td><b>${esc(row.filename || 'Sin archivo')}</b><br><small>${esc(row.source)}</small></td><td><span class="badge">${esc(row.status)}</span></td><td>${row.size_bytes ? `${Math.round(Number(row.size_bytes) / 1024)} KB` : '-'}</td><td>${esc(new Date(row.created_at).toLocaleString('es-AR'))}</td><td><div class="row-actions">${row.storage_path ? `<a href="/systems/backups/${row.id}/download">Descargar</a>` : ''}</div>${row.storage_path ? `<details><summary>Restaurar</summary><form method="post" action="/systems/backups/${row.id}/restore" class="form-stack compact-form"><input type="hidden" name="_csrf" value="${req.csrfToken}"><input name="confirmation" placeholder="Escribir RESTAURAR" required pattern="RESTAURAR"><button>Confirmar restauración</button></form></details>` : ''}</td></tr>`);
-  res.send(layout(req, 'Sistemas', `<section class="toolbar"><div><h1>Sistemas</h1><p>Correo, automatizaciones y resguardo de la base de datos.</p></div></section><div class="systems-grid">
+  res.send(layout(req, 'Sistemas', `<section class="toolbar"><div><h1>Sistemas</h1><p>Correo, automatizaciones y resguardo de la base de datos.</p></div></section><section class="dossier-section"><h2>Mantenimiento</h2><p>Versión instalada: ${esc(version)}</p><form method="post" action="/admin/updates/check"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Registrar revisión de versión</button></form><form method="post" action="/admin/updates/run"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Solicitar actualización al responsable técnico</button></form></section><div class="systems-grid">
     <form method="post" action="/systems/mail" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2 class="span">Correo de notificaciones</h2><label>Servidor SMTP<input name="host" value="${esc(mail.host)}" placeholder="smtp.ejemplo.com"></label><label>Puerto<input name="port" type="number" value="${esc(mail.port)}"></label><label>Usuario<input name="user" value="${esc(mail.user)}"></label><label>Remitente<input name="from" value="${esc(mail.from)}"></label><label class="span">Contraseña SMTP<input name="password" type="password" placeholder="${mail.hasStoredPassword ? 'Configurada; dejar vacío para conservar' : 'Ingresar contraseña'}"></label><label class="check-label"><input name="secure" type="checkbox" ${mail.secure ? 'checked' : ''}> Usar conexión SSL directa</label><button class="primary span">Guardar correo</button></form>
     <section class="panel"><h2>Probar correo</h2><p>Estado: <b>${mail.host && mail.user && (mail.hasStoredPassword || config.smtp.password) ? 'Configurado' : 'Pendiente'}</b></p><form method="post" action="/systems/mail/test" class="form-stack"><input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Enviar prueba a<input name="email" type="email" value="${esc(req.user.email)}" required></label><button>Enviar prueba</button></form></section>
     <form method="post" action="/systems/backups/settings" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2 class="span">Backup automático</h2><label>Frecuencia<select name="frequency"><option value="daily" ${backup.frequency === 'daily' ? 'selected' : ''}>Diario</option><option value="weekly" ${backup.frequency === 'weekly' ? 'selected' : ''}>Una vez por semana</option><option value="twice_weekly" ${backup.frequency === 'twice_weekly' ? 'selected' : ''}>Dos veces por semana</option></select></label><label>Hora<input name="time" type="time" value="${esc(backup.time)}" required></label><label>Primer día<select name="weekday_1">${weekdayOptions(backup.weekdays[0])}</select></label><label>Segundo día<select name="weekday_2">${weekdayOptions(backup.weekdays[1])}</select></label><label>Email destinatario 1<input name="email_1" type="email" value="${esc(backup.emails[0])}" placeholder="sistemas@empresa.com"></label><label>Email destinatario 2<input name="email_2" type="email" value="${esc(backup.emails[1])}" placeholder="responsable@empresa.com"></label><label>Conservar durante<input name="retention_days" type="number" min="1" value="${backup.retentionDays}"></label><label class="check-label"><input name="enabled" type="checkbox" ${backup.enabled ? 'checked' : ''}> Activar backup automático</label><label class="check-label"><input name="send_file" type="checkbox" ${backup.sendFile ? 'checked' : ''}> Adjuntar al email si pesa menos de 20 MB</label><button class="primary span">Guardar automatización</button></form>
