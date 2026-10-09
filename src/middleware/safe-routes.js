@@ -23,6 +23,9 @@ function errorHandler(error, req, res, next) {
   if (error.code === 'LIMIT_FILE_SIZE' || error.status === 413) {
     status = 413;
     message = 'El archivo o la solicitud supera el limite permitido.';
+  } else if (error.status === 503) {
+    status = 503;
+    message = 'No hay espacio disponible para recibir archivos. Contacte al administrador.';
   } else if (error.status === 400 || ['22P02', '22003', '22007', '22008', 'LIMIT_UNEXPECTED_FILE'].includes(error.code)) {
     status = 400;
     message = 'Los datos enviados no son validos. Revise e intente nuevamente.';

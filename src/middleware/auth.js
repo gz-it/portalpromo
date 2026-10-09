@@ -3,6 +3,13 @@ const { ROLES } = require('../constants');
 
 async function attachUser(req, res, next) {
   if (!req.session.userId) return next();
+  const now = Date.now();
+  if (req.session.lastActiveAt && now - req.session.lastActiveAt > 30 * 60 * 1000) {
+    delete req.session.userId;
+    delete req.session.lastActiveAt;
+    return next();
+  }
+  req.session.lastActiveAt = now;
   const result = await db.query(
     `select u.*, array_remove(array_agg(r.name), null) as roles
      from users u

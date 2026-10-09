@@ -19,8 +19,12 @@ const storage = multer.diskStorage({
   destination(req, file, cb) {
     const eventPart = req.params.eventId || 'system';
     const dir = path.join(config.storagePath, eventPart);
-    fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
+    fs.statfs(config.storagePath, (error, stats) => {
+      if (error) return cb(error);
+      const reserve = (config.maxUploadSizeMb + 512) * 1024 * 1024;
+      if (Number(stats.bavail) * Number(stats.bsize) < reserve) return cb(Object.assign(new Error('Espacio insuficiente para una carga segura.'), { status: 503 }));
+      fs.mkdir(dir, { recursive: true }, mkdirError => cb(mkdirError, dir));
+    });
   },
   filename(req, file, cb) {
     cb(null, `${randomUUID()}-${sanitize(file.originalname)}`);

@@ -76,7 +76,8 @@ async function pruneBackups(retentionDays) {
   for (const row of rows.rows) {
     if (!row.storage_path) continue;
     const target = path.resolve(row.storage_path);
-    if (target.startsWith(config.backupPath) && fs.existsSync(target) && fs.statSync(target).mtimeMs < cutoff) fs.unlinkSync(target);
+    const relative = path.relative(config.backupPath, target);
+    if (relative && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative) && fs.existsSync(target) && fs.statSync(target).mtimeMs < cutoff) fs.unlinkSync(target);
   }
   await db.query("delete from backup_runs where created_at < now() - ($1::text || ' days')::interval and status in ('SUCCESS','FAILED')", [retentionDays]);
 }
@@ -124,7 +125,8 @@ async function resolveBackup(id) {
   const row = (await db.query('select * from backup_runs where id=$1', [id])).rows[0];
   if (!row?.storage_path) return null;
   const target = path.resolve(row.storage_path);
-  if (!target.startsWith(config.backupPath) || !fs.existsSync(target)) return null;
+  const relative = path.relative(config.backupPath, target);
+  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || !fs.existsSync(target)) return null;
   return { ...row, target };
 }
 

@@ -1,0 +1,83 @@
+ANALISIS DE SEGURIDAD - PORTAL DE PRODUCTORES
+Fecha: 2026-10-08, America/Buenos_Aires
+
+RESUMEN EJECUTIVO
+No se obtuvo acceso a documentos ajenos ni escalamiento a administrador en los
+casos controlados. Se corrigieron debilidades verificadas por revision de codigo
+y se agregaron pruebas adversariales reproducibles. No es una certificacion ni
+un pentest independiente exhaustivo. El sistema sigue siendo un entorno de prueba.
+
+SEGUNDA REVISION: MEJORAS APLICADAS
+1. Cambio de email/clave administrativa exige la contrasena actual, con limite
+   de intentos. Sin confirmacion, respuesta 403 y ningun cambio de email.
+2. Restauracion de base exige contrasena actual de Sistemas, ademas de CSRF y
+   confirmacion RESTAURAR. Se verifico que el rechazo no ejecuta backups/restore.
+3. Autenticacion caduca tras 30 minutos de inactividad. Logout invalida el SID;
+   su reutilizacion no permite ingresar.
+4. Contencion de rutas tambien en backups: evita directorios vecinos que
+   comparten prefijo con la carpeta autorizada.
+5. Antes de cada archivo se comprueba espacio libre para el maximo permitido
+   mas una reserva de 512 MB. No es una cuota por usuario ni un bloqueo de DoS.
+6. Uploads y backups locales con permisos 700, usuario portalpromo.
+7. Node actualizado de 22.23.2 a 22.23.3; portal y CCTV activos tras reinicio.
+8. Nginx no publica numero de version; configuracion comprobada con nginx -t.
+
+CONTROLES EXISTENTES VERIFICADOS
+HTTPS con certificado valido; TLS 1.2/1.3 en el servidor de aplicacion.
+UFW y Fail2ban activos. Puertos internos y PostgreSQL en loopback.
+Servicio como usuario portalpromo: NoNewPrivileges, ProtectSystem=strict,
+ProtectHome y PrivateTmp. Rol PostgreSQL sin superuser/create-role/create-db.
+Sesiones PostgreSQL; cookie Secure/HttpOnly/SameSite, rotacion y CSRF.
+CSP con nonce; escape HTML; validacion de enlaces y firmas basicas de archivos.
+Permisos por evento; notificaciones privadas; actualizaciones solo Sistemas.
+Credenciales de pg_dump/pg_restore fuera de argumentos de proceso.
+
+EVIDENCIA
+43 pruebas unitarias OK (total del sistema, no 43 casos independientes de pentest).
+Integracion PostgreSQL aislada: permisos, inyeccion basica, archivos falsos,
+limites de login, reautenticacion, logout y recuperacion cifrada OK.
+9 lecturas y 6 escrituras cruzadas bloqueadas.
+Auditoria productiva de dependencias sin avisos conocidos en la revision inicial.
+HTTPS /health responde 200 y Nginx ya no expone version.
+Renovacion de certificado: timer snap.certbot.renew presente; no se forzo emision.
+La inspeccion externa SMTP 25 sigue inconclusa desde esta red; ver informe inicial.
+
+RIESGOS RESIDUALES POR PRIORIDAD
+ALTA - CONTINUIDAD: backup completo automatico fuera del VPS pendiente.
+  Una copia solo local no protege contra perdida/compromiso del servidor.
+ALTA - DOCUMENTOS: no existe escaneo antivirus bloqueante.
+  Firmas validas no prueban ausencia de malware. Office/PDF pueden ser peligrosos
+  para quien los abre. ClamAV requiere mas memoria que este VPS de 1 GB.
+ALTA ANTES DE PRODUCCION - ACCESOS: credenciales de prueba/expuestas y SSH por
+  contrasena se mantienen por decision del propietario; deben rotarse/restringirse.
+MEDIA - CUENTAS PRIVILEGIADAS: no hay doble factor. Reautenticacion reduce el
+  impacto de una sesion robada en las operaciones reforzadas, no en todas las acciones.
+MEDIA - SISTEMAS COMPARTIDOS: portal y CCTV comparten VPS y origen HTTPS.
+  No se audito el codigo CCTV en este trabajo. Separar dominios/origenes reduce
+  el riesgo de que una falla en un sistema afecte al otro; separar VPS da mayor aislamiento.
+MEDIA - RECURSOS: no hay cuotas por cliente ni proteccion exhaustiva contra
+  archivos comprimidos expansivos, cargas paralelas o saturacion distribuida.
+MEDIA - RESTAURACION: .dump ejecuta SQL privilegiado. Usar solo copias propias
+  verificadas. La confirmacion de clave no vuelve seguro un dump de terceros.
+MEDIA - OPERACION: falta alerta externa ante caidas, disco, fallos de backup y TLS.
+
+DECISION DE PUESTA EN PRODUCCION
+No declarar 'blindado' o libre de vulnerabilidades. Cerrar primero antivirus,
+backup externo, accesos definitivos y aislamiento; luego realizar una revision
+independiente con alcance acordado y repetir las pruebas despues de cada cambio.
+
+NO REALIZADO
+Sin malware activo, ataques de saturacion, explotacion de kernel, fuerza bruta
+SSH, borrado de datos reales ni auditoria independiente de todos los componentes.
+No se cambiaron claves de prueba, no se cerro SSH y no se enviaron mails reales.
+
+FUENTES Y REPRODUCCION
+OWASP: https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html
+ClamAV: https://docs.clamav.net/ (recomendacion de 3-4 GiB para motor y firmas).
+Informe inicial: PENTEST-2026-10-08.txt
+node --test
+node scripts/pentest-external.js
+pnpm audit --prod
+VPS: node -r dotenv/config scripts/review-sandbox.js dotenv_config_path=/etc/portalpromo.env
+
+Responsable: revision automatizada asistida; no servicio de certificacion.

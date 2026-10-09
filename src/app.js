@@ -104,6 +104,16 @@ function parseBody(schema, body) {
   return parsed.data;
 }
 
+async function confirmCurrentPassword(req, res) {
+  const value = req.body.current_password;
+  if (typeof value !== 'string' || Buffer.byteLength(value) > 72 || !await verifyPassword(value, req.user.password_hash)) {
+    res.status(403).send('Confirme su contraseña actual para esta operación.');
+    return false;
+  }
+  return true;
+}
+const sensitiveLimit = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false });
+
 function renderChecklist(eventId, items, title) {
   const summary = summarizeChecklist(items);
   const stateLabels = { complete: 'Completo', missing: 'Falta', warning: 'Atención' };
@@ -887,14 +897,15 @@ routes.get('/admin/settings', requireLogin, requireRole(ROLES.ADMIN), async (req
   const tabs = [['cuenta', 'Mi cuenta'], ['portal', 'Portal'], ['notificaciones', 'Notificaciones']].map(([key, name]) => `<a class="button ${section === key ? 'primary' : ''}" ${section === key ? 'aria-current="page"' : ''} href="/admin/settings?section=${key}">${name}</a>`).join('');
   res.send(layout(req, 'Configuracion', `<section class="toolbar"><div><h1>Configuración</h1><p>Cuenta e identidad del portal.</p></div><nav class="row-actions" aria-label="Secciones de configuración">${tabs}</nav></section><div class="settings-stack">
   ${section === 'cuenta' ? `
-  <form method="post" action="/admin/settings/account" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2 class="span">Mi cuenta</h2><label>Nombre<input name="first_name" value="${esc(req.user.first_name)}" required></label><label>Apellido<input name="last_name" value="${esc(req.user.last_name)}" required></label><label>Teléfono<input name="phone" value="${esc(req.user.phone)}"></label><label>Email<input name="email" type="email" value="${esc(req.user.email)}" required></label><label class="span">Nueva contraseña<input name="password" type="password" minlength="12" placeholder="Dejar vacío para conservar la actual"></label><button class="primary span">Guardar cuenta</button></form>
+  <form method="post" action="/admin/settings/account" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2 class="span">Mi cuenta</h2><label>Nombre<input name="first_name" value="${esc(req.user.first_name)}" required></label><label>Apellido<input name="last_name" value="${esc(req.user.last_name)}" required></label><label>Teléfono<input name="phone" value="${esc(req.user.phone)}"></label><label>Email<input name="email" type="email" value="${esc(req.user.email)}" required></label><label class="span">Nueva contraseña<input name="password" type="password" minlength="12" placeholder="Dejar vacío para conservar la actual"></label><label class="span">Contraseña actual (para cambiar email o contraseña)<input name="current_password" type="password" autocomplete="current-password"></label><button class="primary span">Guardar cuenta</button></form>
   ` : section === 'portal' ? `
   <form method="post" action="/admin/settings/identity?_csrf=${req.csrfToken}" enctype="multipart/form-data" class="panel form-grid upload-form"><h2 class="span">Identidad del portal</h2><label>Nombre de Empresa<input name="company_name" value="${esc(app.locals.portalSettings.company_name)}"></label><label>Título del Portal<input name="portal_title" value="${esc(app.locals.portalSettings.portal_title)}"></label><label class="span">Logo<input type="file" name="file" accept="image/png,image/jpeg,image/webp"></label><progress hidden max="100"></progress><button class="primary span">Guardar identidad</button></form>
   ` : `<section class="dossier-section"><h2>Correo de notificaciones</h2><p>Envío: <b>${mail.host && mail.user && mail.password ? 'Configurado' : 'Pendiente de configurar en Sistemas'}</b></p><p>Destinatario de tus avisos: <b>${esc(req.user.email)}</b></p><a class="button" href="/admin/settings?section=cuenta">Modificar mi email</a><a class="button" href="/notifications">Ver notificaciones</a></section>`}</div>`));
 });
 
-routes.post('/admin/settings/account', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.post('/admin/settings/account', requireLogin, requireRole(ROLES.ADMIN), sensitiveLimit, async (req, res) => {
   const account = parseBody(z.object({ first_name:z.string().min(1), last_name:z.string().min(1), phone:z.string().optional(), email:z.string().email(), password:z.union([z.literal(''), z.string().min(12).refine(value => Buffer.byteLength(value) <= 72)]).optional() }), req.body);
+  if ((account.password || account.email !== req.user.email) && !await confirmCurrentPassword(req, res)) return;
   if (account.password) await db.query('update users set first_name=$1,last_name=$2,phone=$3,email=$4,password_hash=$5,updated_at=now() where id=$6', [account.first_name, account.last_name, account.phone, account.email, await hashPassword(account.password), req.user.id]);
   else await db.query('update users set first_name=$1,last_name=$2,phone=$3,email=$4,updated_at=now() where id=$5', [account.first_name, account.last_name, account.phone, account.email, req.user.id]);
   await audit(req.user.id, 'actualizar_cuenta_admin', 'users', req.user.id);
@@ -946,7 +957,7 @@ routes.get('/systems', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res
   ]);
   const weekdayNames = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
   const weekdayOptions = (selected) => weekdayNames.map((name, index) => `<option value="${index}" ${index === selected ? 'selected' : ''}>${name}</option>`).join('');
-  const backupRows = backups.rows.map((row) => `<tr><td><b>${esc(row.filename || 'Sin archivo')}</b><br><small>${esc(row.source)}</small></td><td><span class="badge">${esc(row.status)}</span></td><td>${row.size_bytes ? `${Math.round(Number(row.size_bytes) / 1024)} KB` : '-'}</td><td>${esc(new Date(row.created_at).toLocaleString('es-AR'))}</td><td><div class="row-actions">${row.storage_path ? `<a href="/systems/backups/${row.id}/download">Descargar</a>` : ''}</div>${row.storage_path ? `<details><summary>Restaurar</summary><form method="post" action="/systems/backups/${row.id}/restore" class="form-stack compact-form"><input type="hidden" name="_csrf" value="${req.csrfToken}"><input name="confirmation" placeholder="Escribir RESTAURAR" required pattern="RESTAURAR"><button>Confirmar restauración</button></form></details>` : ''}</td></tr>`);
+  const backupRows = backups.rows.map((row) => `<tr><td><b>${esc(row.filename || 'Sin archivo')}</b><br><small>${esc(row.source)}</small></td><td><span class="badge">${esc(row.status)}</span></td><td>${row.size_bytes ? `${Math.round(Number(row.size_bytes) / 1024)} KB` : '-'}</td><td>${esc(new Date(row.created_at).toLocaleString('es-AR'))}</td><td><div class="row-actions">${row.storage_path ? `<a href="/systems/backups/${row.id}/download">Descargar</a>` : ''}</div>${row.storage_path ? `<details><summary>Restaurar</summary><form method="post" action="/systems/backups/${row.id}/restore" class="form-stack compact-form"><input type="hidden" name="_csrf" value="${req.csrfToken}"><input name="confirmation" placeholder="Escribir RESTAURAR" required pattern="RESTAURAR"><label>Contraseña actual<input name="current_password" type="password" required autocomplete="current-password"></label><button>Confirmar restauración</button></form></details>` : ''}</td></tr>`);
   res.send(layout(req, 'Sistemas', `<section class="toolbar"><div><h1>Sistemas</h1><p>Correo, automatizaciones y resguardo de la base de datos.</p></div></section><section class="dossier-section"><h2>Mantenimiento</h2><p>Versión instalada: ${esc(version)}</p><form method="post" action="/admin/updates/check"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Registrar revisión de versión</button></form><form method="post" action="/admin/updates/run"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Solicitar actualización al responsable técnico</button></form></section><div class="systems-grid">
     <form method="post" action="/systems/mail" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2 class="span">Correo de notificaciones</h2><label>Servidor SMTP<input name="host" value="${esc(mail.host)}" placeholder="smtp.ejemplo.com"></label><label>Puerto<input name="port" type="number" value="${esc(mail.port)}"></label><label>Usuario<input name="user" value="${esc(mail.user)}"></label><label>Remitente<input name="from" value="${esc(mail.from)}"></label><label class="span">Contraseña SMTP<input name="password" type="password" placeholder="${mail.hasStoredPassword ? 'Configurada; dejar vacío para conservar' : 'Ingresar contraseña'}"></label><label class="check-label"><input name="secure" type="checkbox" ${mail.secure ? 'checked' : ''}> Usar conexión SSL directa</label><button class="primary span">Guardar correo</button></form>
     <section class="panel"><h2>Probar correo</h2><p>Estado: <b>${mail.host && mail.user && (mail.hasStoredPassword || config.smtp.password) ? 'Configurado' : 'Pendiente'}</b></p><form method="post" action="/systems/mail/test" class="form-stack"><input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Enviar prueba a<input name="email" type="email" value="${esc(req.user.email)}" required></label><button>Enviar prueba</button></form></section>
@@ -1005,7 +1016,8 @@ routes.get('/systems/backups/:id/download', requireLogin, requireRole(ROLES.SYST
   res.download(backup.target, backup.filename);
 });
 
-routes.post('/systems/backups/:id/restore', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
+routes.post('/systems/backups/:id/restore', requireLogin, requireRole(ROLES.SYSTEMS), sensitiveLimit, async (req, res) => {
+  if (!await confirmCurrentPassword(req, res)) return;
   if (req.body.confirmation !== 'RESTAURAR') { flash(req, 'error', 'Escriba RESTAURAR para confirmar.'); return res.redirect('/systems'); }
   const backup = await resolveBackup(req.params.id);
   if (!backup) return res.status(404).send('Backup no encontrado');

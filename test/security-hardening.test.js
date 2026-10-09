@@ -9,6 +9,15 @@ const os = require('node:os');
 const config = require('../src/config');
 const { safeWebUrl } = require('../src/utils/security');
 const { pgEnvironment } = require('../src/utils/pg-environment');
+const { attachUser } = require('../src/middleware/auth');
+
+test('inactive sessions lose authenticated access without a database lookup', async () => {
+  const req = { session: { userId: 'expired', lastActiveAt: Date.now() - 31 * 60 * 1000 } };
+  let continued = false;
+  await attachUser(req, {}, () => { continued = true; });
+  assert.equal(req.session.userId, undefined);
+  assert.equal(continued, true);
+});
 
 test('database backup credentials are decoded into process environment', () => {
   const env = pgEnvironment('postgres://user:pass%40word@localhost:5433/portal');
