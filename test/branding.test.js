@@ -12,13 +12,14 @@ test('header separates portal name and venue without changing navigation', () =>
   assert.match(html, /class="brand-title">Portal de Productores<\/b>/);
   assert.match(html, /class="brand-subtitle">Estadio Huracán<\/span>/);
   assert.match(html, /href="\/notifications"/);
+  assert.match(html, /app\.css\?v=[a-f0-9]{12}/);
 });
 
 test('brand stays red while reading and positive states use neutral colors', () => {
   assert.match(css, /--primary:\s*#e30713;/);
   assert.match(css, /--ok:\s*#344054;/);
-  assert.match(css, /font-size:\s*16px; line-height:\s*1\.55;/);
-  assert.match(css, /\.module-pill small\s*\{[^}]*font-size:\s*14px;/);
+  assert.match(css, /font-size:\s*17px; line-height:\s*1\.55;/);
+  assert.match(css, /\.module-pill small\s*\{[^}]*font-size:\s*15px;/);
   const green = [...css.matchAll(/#([a-f\d]{6})\b/gi)].filter(([, hex]) => {
     const [r, g, b] = [0, 2, 4].map(i => parseInt(hex.slice(i, i + 2), 16));
     return g > r && g > b;

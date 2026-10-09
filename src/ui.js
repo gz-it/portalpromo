@@ -1,4 +1,8 @@
 const { MODULES, ROLES } = require('./constants');
+const fs = require('fs');
+const path = require('path');
+const { createHash } = require('crypto');
+const stylesheetVersion = createHash('sha256').update(fs.readFileSync(path.join(__dirname, 'public/css/app.css'))).digest('hex').slice(0, 12);
 
 function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -36,7 +40,7 @@ function layout(req, title, body, options = {}) {
   <html lang="es"><head>
     <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <title>${esc(title)} - ${esc(settings.portal_title || 'Portal de Productores')}</title>
-    <link rel="stylesheet" href="/public/css/app.css">
+    <link rel="stylesheet" href="/public/css/app.css?v=${stylesheetVersion}">
   </head><body${options.auth ? ' class="auth-page"' : ''}>
     ${nav}
     <main class="${options.narrow ? 'page narrow' : 'page'}">
