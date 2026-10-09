@@ -5,6 +5,14 @@ const path = require('node:path');
 
 const css = fs.readFileSync(path.join(__dirname, '../src/public/css/app.css'), 'utf8');
 const { layout } = require('../src/ui');
+const { ROLES } = require('../src/constants');
+
+test('admin home omits redundant navigation but inner pages retain dashboard access', () => {
+  const render = (route, roles) => layout({ path: route, app: { locals: {} }, session: {}, user: { roles } }, 'Prueba', '');
+  assert.doesNotMatch(render('/admin', [ROLES.ADMIN]), /href="\/admin">Panel general/);
+  assert.match(render('/admin/events', [ROLES.ADMIN]), /href="\/admin">Panel general/);
+  assert.doesNotMatch(render('/notifications', [ROLES.PRODUCER]), /href="\/admin">Panel general/);
+});
 
 test('management screens have explicit safe return destinations', () => {
   for (const route of ['/admin/events', '/admin/reviews', '/admin/users', '/admin/settings', '/events/new']) {

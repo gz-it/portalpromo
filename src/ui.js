@@ -40,7 +40,7 @@ function layout(req, title, body, options = {}) {
       <nav class="top-actions">
         <a class="notification-link" href="/notifications">Notificaciones${user.unread_notifications ? `<span>${user.unread_notifications}</span>` : ''}</a>
         <span class="user-name">${esc(user.first_name)} ${esc(user.last_name)}</span>
-        ${user.roles.includes(ROLES.ADMIN) ? '<a href="/admin">Administracion</a>' : ''}
+        ${user.roles.includes(ROLES.ADMIN) && req.path !== '/admin' ? '<a href="/admin">Panel general</a>' : ''}
         ${user.roles.includes(ROLES.SYSTEMS) ? '<a href="/systems">Sistemas</a>' : ''}
         <form method="post" action="/logout"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Salir</button></form>
       </nav>
