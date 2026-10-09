@@ -5,6 +5,7 @@ const multer = require('multer');
 const sanitize = require('sanitize-filename');
 const config = require('../config');
 const db = require('../db');
+const { pgEnvironment } = require('../utils/pg-environment');
 const { sendMail } = require('../utils/email');
 const {
   DEFAULT_TIMEZONE,
@@ -18,7 +19,7 @@ fs.mkdirSync(config.backupPath, { recursive: true });
 
 function run(command, args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { shell: process.platform === 'win32' });
+    const child = spawn(command, args, { shell: false, env: pgEnvironment(config.databaseUrl) });
     let errorText = '';
     child.stderr.on('data', (chunk) => { errorText += chunk.toString(); });
     child.on('error', reject);
@@ -85,7 +86,7 @@ async function createBackup({ source = 'MANUAL', userId = null, notify = true } 
   const target = path.join(config.backupPath, filename);
   const record = (await db.query('insert into backup_runs (filename,storage_path,source,status,requested_by) values ($1,$2,$3,$4,$5) returning id', [filename, target, source, 'RUNNING', userId])).rows[0];
   try {
-    await run(config.pgDumpBin, ['--format=custom', '--file', target, config.databaseUrl]);
+    await run(config.pgDumpBin, ['--format=custom', '--file', target]);
     const size = fs.statSync(target).size;
     await db.query("update backup_runs set status='SUCCESS',size_bytes=$2,finished_at=now() where id=$1", [record.id, size]);
     const settings = await getBackupSettings();
@@ -129,7 +130,7 @@ async function resolveBackup(id) {
 
 async function restoreBackup(row, userId) {
   await createBackup({ source: 'PRE_RESTORE', userId, notify: false });
-  await run(config.pgRestoreBin, ['--clean', '--if-exists', '--no-owner', '--no-privileges', '--dbname', config.databaseUrl, row.target]);
+  await run(config.pgRestoreBin, ['--clean', '--if-exists', '--no-owner', '--no-privileges', row.target]);
 }
 
 let schedulerTimer;

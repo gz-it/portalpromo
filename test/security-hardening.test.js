@@ -7,6 +7,20 @@ const { saveAttachment } = require('../src/services/storage');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const config = require('../src/config');
+const { safeWebUrl } = require('../src/utils/security');
+const { pgEnvironment } = require('../src/utils/pg-environment');
+
+test('database backup credentials are decoded into process environment', () => {
+  const env = pgEnvironment('postgres://user:pass%40word@localhost:5433/portal');
+  assert.equal(env.PGPASSWORD, 'pass@word');
+  assert.equal(env.PGDATABASE, 'portal');
+  assert.equal(env.PGPORT, '5433');
+});
+
+test('ticketing links reject executable schemes and embedded credentials', () => {
+  for (const value of ['javascript:alert(1)', 'data:text/html,<script>alert(1)</script>', '//evil.example', 'https://user:secret@example.com', null]) assert.equal(safeWebUrl(value), '');
+  assert.equal(safeWebUrl('https://tickets.example/event'), 'https://tickets.example/event');
+});
 
 test('attachment paths cannot escape to a sibling directory', () => {
   assert.throws(() => resolveAttachment({ storage_key: '../uploads-evil/file.pdf' }), /Ruta invalida/);

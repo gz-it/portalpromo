@@ -151,6 +151,53 @@ async function main() {
     assert.match(modulePage, /Guardar archivo/);
     console.log('PASS productor ve campos claros y documentos administrativos separados');
     console.log('PASS documento administrativo visible para el productor');
+    const other = (await db.query(`insert into users(first_name,last_name,email,username,password_hash,status)
+      values('Otro','Productor','other@example.invalid','other@example.invalid',$1,'ACTIVO') returning id`, [await hashPassword(password)])).rows[0];
+    await db.query("insert into user_roles select $1,id from roles where name='PRODUCTOR'", [other.id]);
+    const outsider = session();
+    await outsider.login('other@example.invalid');
+    await outsider.request('/dashboard');
+    for (const route of [`/events/${eventId}`, `/events/${eventId}/modules/seguros`, `/events/${eventId}/zip`, `/files/${file.id}/view`, `/files/${file.id}/download`, `/files/${adminFile.id}/view`, '/admin', '/admin/users', '/systems']) {
+      assert.equal((await outsider.request(route)).status, 403, `Acceso cruzado permitido: ${route}`);
+    }
+    for (const [route, body] of [
+      [`/events/${eventId}/modules/seguros/entries`, { label: 'Ataque', value: 'No debe persistir' }],
+      [`/files/${file.id}/delete`, {}],
+      [`/events/${eventId}/review/seguros`, { status: 'APROBADO' }],
+      ['/admin/users', { first_name: 'Ataque', last_name: 'Admin', email: 'attack@example.invalid', role: 'SISTEMAS' }],
+      ['/systems/backups/run', {}],
+      ['/admin/settings/identity', { portal_title: 'Ataque' }],
+    ]) assert.equal((await outsider.post(route, body)).status, 403, `Escritura cruzada permitida: ${route}`);
+    const ownNotification = (await db.query('select id from notifications where user_id=$1 limit 1', [admin.id])).rows[0];
+    assert.equal((await outsider.post(`/notifications/${ownNotification.id}/read`, {})).status, 404);
+    assert.equal((await db.query('select deleted_at from attachments where id=$1', [file.id])).rows[0].deleted_at, null);
+    console.log('PASS PENTEST aislamiento: 9 lecturas y 6 escrituras cruzadas denegadas; notificaciones privadas');
+
+    await producer.request(`/events/${eventId}/modules/seguros`);
+    const injection = '<img src=x onerror=alert(1)><script>alert(1)</script>';
+    assert.equal((await producer.post(`/events/${eventId}/modules/seguros/entries`, { label: injection, value: injection })).status, 302);
+    const injectedPage = await administrator.request(`/events/${eventId}/modules/seguros`);
+    assert.ok(!injectedPage.text.includes(injection));
+    assert.match(injectedPage.text, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+    assert.equal((await outsider.post('/login', { login: "' OR 1=1 --", password: 'incorrect' })).location, '/login');
+    const forged = new FormData();
+    forged.set('label', 'Archivo falso');
+    forged.set('file', new Blob([injection], { type: 'image/png' }), 'fake.png');
+    const uploadToken = (await producer.request(`/events/${eventId}/modules/seguros`)).text.match(/name="_csrf" value="([^"]+)"/)[1];
+    assert.equal((await producer.request(`/events/${eventId}/modules/seguros/entries?_csrf=${uploadToken}`, { method: 'POST', body: forged })).status, 400);
+    assert.equal((await db.query('select count(*)::int n from attachments')).rows[0].n, 2);
+    const anonymous = session();
+    for (const route of ['/admin', '/systems', `/files/${adminFile.id}/view`]) assert.equal((await anonymous.request(route)).location, '/login');
+    console.log('PASS PENTEST inyeccion basica SQL/XSS, archivo disfrazado y acceso anonimo');
+    await db.query('delete from user_roles where user_id=$1', [other.id]);
+    await db.query("insert into user_roles select $1,id from roles where name='GERENCIADORA'", [other.id]);
+    assert.equal((await outsider.request(`/events/${eventId}/modules/ticketera`)).status, 403);
+    await db.query('insert into event_manager_access(event_id,user_id) values($1,$2)', [eventId, other.id]);
+    await outsider.request(`/events/${eventId}/modules/ticketera`);
+    assert.equal((await outsider.post(`/events/${eventId}/modules/ticketera/link`, { sales_url: 'javascript:alert(1)' })).status, 400);
+    await db.query("insert into ticketing(event_id,sales_url) values($1,'javascript:alert(1)')", [eventId]);
+    assert.doesNotMatch((await producer.request(`/events/${eventId}/modules/ticketera`)).text, /href="javascript:/);
+    console.log('PASS PENTEST gerenciadora sin asignacion bloqueada; enlaces ejecutables rechazados y no renderizados');
     const { createBackup } = require('../src/services/backups');
     const backup = await createBackup({ notify:false });
     const restoreUrl = new URL(scratch); restoreUrl.pathname = `/${restored}`;

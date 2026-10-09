@@ -30,7 +30,7 @@ const { audit } = require('./utils/audit');
 const { sendMail, verifyMail, getMailSettings, saveMailSettings } = require('./utils/email');
 const { sendVerification, confirmEmail, notifyRegistrationAdmins } = require('./services/registration');
 const { sendInvitation, acceptInvitation } = require('./services/invitations');
-const { hashPassword, verifyPassword, makeToken, hashToken } = require('./utils/security');
+const { hashPassword, verifyPassword, makeToken, hashToken, safeWebUrl } = require('./utils/security');
 const { esc, layout, authPage, eventHeader, table, optionList } = require('./ui');
 const { loadSettings, setSetting } = require('./services/settings');
 const { initModules, loadModuleStatuses, markLoaded } = require('./services/events');
@@ -375,6 +375,7 @@ routes.get('/events/:eventId/modules/:moduleKey', requireLogin, loadAuthorizedEv
     content = `<section><div class="section-heading"><h2>Resumen de carga y revisión</h2><span>La carga completa no implica aprobación administrativa</span></div>${table(['Módulo','Carga documental','Revisión administrativa','Detalle'], statusRows)}</section>`;
   } else if (key === 'ticketera') {
     const ticketing = (await db.query('select * from ticketing where event_id=$1', [req.event.id])).rows[0] || {};
+    ticketing.sales_url = safeWebUrl(ticketing.sales_url);
     const approvals = await db.query('select a.*, u.first_name, u.last_name from ticketing_approvals a left join users u on u.id=a.created_by where event_id=$1 order by created_at desc', [req.event.id]);
     content = `<form method="post" action="/events/${req.event.id}/modules/ticketera/link" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Nombre de Ticketera<input name="ticketing_name" value="${esc(ticketing.ticketing_name)}"></label><label>URL/link de venta<input name="sales_url" value="${esc(ticketing.sales_url)}"></label><label>Fecha<input type="date" name="sales_date" value="${esc(ticketing.sales_date)}"></label><label class="span">Observaciones<textarea name="sales_observations">${esc(ticketing.sales_observations)}</textarea></label><button class="primary span">Guardar link</button></form>
     ${ticketing.sales_url ? `<a class="primary" target="_blank" href="${esc(ticketing.sales_url)}">Abrir evento en Ticketera</a>` : ''}
@@ -554,6 +555,7 @@ routes.post('/events/:eventId/modules/comercial/phases', requireLogin, loadAutho
 });
 
 routes.post('/events/:eventId/modules/ticketera/link', requireLogin, loadAuthorizedEvent, requireRole(ROLES.MANAGER), async (req, res) => {
+  if (req.body.sales_url && !safeWebUrl(req.body.sales_url)) return res.status(400).send('El enlace debe ser HTTP o HTTPS y no incluir credenciales.');
   await db.query(`insert into ticketing (event_id,ticketing_name,sales_url,sales_date,sales_observations) values ($1,$2,$3,$4,$5)
     on conflict (event_id) do update set ticketing_name=$2,sales_url=$3,sales_date=$4,sales_observations=$5,updated_at=now()`, [req.event.id, req.body.ticketing_name, req.body.sales_url, req.body.sales_date || null, req.body.sales_observations]);
   const owner = (await db.query('select email from users where id=$1', [req.event.owner_user_id])).rows[0];
