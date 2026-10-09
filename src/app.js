@@ -631,7 +631,7 @@ routes.get('/admin', requireLogin, requireRole(ROLES.ADMIN), async (req, res) =>
       (select count(*) from events) events,
       (select count(distinct u.id) from users u join user_roles ur on ur.user_id=u.id join roles r on r.id=ur.role_id where r.name='PRODUCTOR' and u.status='ACTIVO') producers,
       (select count(*) from attachments where event_id is not null and deleted_at is null) files,
-      (select count(*) from event_modules where status in ('CARGADO','OBSERVADO')) pending_reviews,
+      (select count(*) from event_modules where status='CARGADO') pending_reviews,
       (select count(*) from event_modules where status='OBSERVADO') observed`),
     db.query(`select e.id,e.name,e.artist,e.venue,u.first_name || ' ' || u.last_name producer,
       count(distinct m.module_key) filter (where m.status <> 'PENDIENTE') active_modules,
@@ -663,7 +663,7 @@ routes.get('/admin', requireLogin, requireRole(ROLES.ADMIN), async (req, res) =>
 
   res.send(layout(req, 'Panel general', `
     <section class="toolbar dashboard-head"><div><h1>Panel general</h1><p>Estado documental y revisiones de todos los eventos.</p></div><nav class="dashboard-actions" aria-label="Acciones del administrador"><div class="dashboard-action-group" role="group" aria-label="Eventos y revisiones"><a class="button primary" href="/admin/events">Todos los eventos</a><a class="button" href="/admin/reviews">Revisiones pendientes</a></div><div class="dashboard-action-group" role="group" aria-label="Gestión del portal"><a class="button" href="/admin/users">Agregar productores</a><a class="button" href="/admin/settings">Configuración</a></div></nav></section>
-    <section class="summary-strip dashboard-summary"><div><strong>${metrics.events}</strong><span>Eventos</span></div><div><strong>${metrics.producers}</strong><span>Productores activos</span></div><div><strong>${metrics.pending_reviews}</strong><span>Revisiones pendientes</span></div><div><strong>${metrics.files}</strong><span>Archivos cargados</span></div><div><strong>${req.user.unread_notifications}</strong><span>Notificaciones nuevas</span></div></section>
+    <section class="summary-strip dashboard-summary"><a href="/admin/events"><strong>${metrics.events}</strong><span>Eventos</span></a><a href="/admin/users"><strong>${metrics.producers}</strong><span>Productores activos</span></a><a href="/admin/reviews?status=CARGADO"><strong>${metrics.pending_reviews}</strong><span>Módulos por revisar</span></a><a href="/admin/reviews?status=OBSERVADO"><strong>${metrics.observed}</strong><span>Esperando corrección</span></a><a href="/notifications"><strong>${req.user.unread_notifications}</strong><span>Notificaciones nuevas</span></a></section>
     <section class="dashboard-columns"><div><div class="section-heading"><h2>Estado de eventos</h2><a href="/admin/events">Ver todos</a></div>${table(['Evento','Productor','Avance','Última carga','Acción'], eventRows)}</div><aside><div class="section-heading"><h2>Requieren atención</h2><a href="/admin/reviews">Ver revisiones</a></div><div class="attention-list">${attentionItems || '<p class="empty">No hay módulos pendientes.</p>'}</div></aside></section>
     <section class="dossier-section"><div class="section-heading"><h2>Actividad reciente</h2><span>Últimos archivos recibidos</span></div>${table(['Evento','Productor','Módulo','Archivo','Fecha','Acción'], activityRows)}</section>
   `));
@@ -849,8 +849,10 @@ routes.post('/admin/events/:id/manager', requireLogin, requireRole(ROLES.ADMIN),
 });
 
 routes.get('/admin/reviews', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
-  const mods = await db.query(`select m.*, e.name event_name from event_modules m join events e on e.id=m.event_id where m.status in ('CARGADO','OBSERVADO') order by m.updated_at desc`);
-  res.send(layout(req, 'Revisiones', `<h1>Revisiones</h1>${table(['Evento','Módulo','Estado','Acción'], mods.rows.map((m)=>`<tr><td>${esc(m.event_name)}</td><td>${esc(m.module_name)}</td><td>${esc(m.status)}</td><td><a href="/events/${m.event_id}/modules/${m.module_key}">Revisar módulo</a></td></tr>`))}`));
+  const status = ['CARGADO', 'OBSERVADO'].includes(req.query.status) ? req.query.status : null;
+  const mods = await db.query(`select m.*, e.name event_name from event_modules m join events e on e.id=m.event_id where m.status in ('CARGADO','OBSERVADO') and ($1::text is null or m.status=$1) order by m.updated_at desc`, [status]);
+  const filters = [['', 'Todos'], ['CARGADO', 'Por revisar'], ['OBSERVADO', 'Esperando corrección']].map(([value, label]) => `<a class="button ${value === (status || '') ? 'primary' : ''}" ${value === (status || '') ? 'aria-current="page"' : ''} href="/admin/reviews${value ? `?status=${value}` : ''}">${label}</a>`).join('');
+  res.send(layout(req, 'Revisiones', `<section class="toolbar"><div><h1>Revisiones</h1><p>${mods.rows.length} módulos ${status === 'OBSERVADO' ? 'esperando corrección del productor' : status === 'CARGADO' ? 'por revisar' : 'requieren seguimiento'}.</p></div><nav class="row-actions" aria-label="Filtrar revisiones">${filters}</nav></section>${table(['Evento','Módulo','Estado','Acción'], mods.rows.map((m)=>`<tr><td>${esc(m.event_name)}</td><td>${esc(MODULES.find(module => module.key === m.module_key)?.name || m.module_name)}</td><td>${m.status === 'OBSERVADO' ? 'Esperando corrección' : 'Por revisar'}</td><td><a href="/events/${m.event_id}/modules/${m.module_key}">${m.status === 'OBSERVADO' ? 'Ver módulo' : 'Revisar módulo'}</a></td></tr>`))}`));
 });
 
 routes.get('/admin/settings', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {

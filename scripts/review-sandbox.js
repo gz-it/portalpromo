@@ -83,9 +83,12 @@ async function main() {
     const adminDashboard = await administrator.request('/admin');
     assert.equal(adminDashboard.status, 200);
     assert.match(adminDashboard.text, /href="\/admin\/reviews">Revisiones pendientes/);
-    for (const route of ['/admin/events', '/admin/reviews', '/admin/users', '/admin/settings']) {
-      assert.equal((await administrator.request(route)).status, 200);
+    for (const route of ['/admin/events', '/admin/reviews', '/admin/users', '/admin/settings', '/admin/reviews?status=CARGADO', '/admin/reviews?status=OBSERVADO']) {
+      const page = await administrator.request(route);
+      assert.equal(page.status, 200);
+      assert.match(page.text, /class="page-return"/);
     }
+    assert.match(adminDashboard.text, /href="\/admin\/reviews\?status=OBSERVADO"/);
     await administrator.request('/admin/users');
     await administrator.post('/admin/users', { first_name:'Prueba',last_name:'Productor',email:'producer@example.invalid',role:'PRODUCTOR' });
     const invite = outbox.find(mail => mail[0] === 'producer@example.invalid');

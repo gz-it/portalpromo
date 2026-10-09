@@ -6,6 +6,14 @@ const path = require('node:path');
 const css = fs.readFileSync(path.join(__dirname, '../src/public/css/app.css'), 'utf8');
 const { layout } = require('../src/ui');
 
+test('management screens have explicit safe return destinations', () => {
+  for (const route of ['/admin/events', '/admin/reviews', '/admin/users', '/admin/settings', '/events/new']) {
+    const html = layout({ path: route, app: { locals: {} }, session: {}, user: { roles: [] } }, 'Prueba', '');
+    assert.match(html, /class="page-return"/);
+    assert.ok(html.includes(`href="${route === '/events/new' ? '/dashboard' : '/admin'}"><span aria-hidden="true">←</span>`));
+  }
+});
+
 test('header separates portal name and venue without changing navigation', () => {
   const html = layout({ app: { locals: { portalSettings: { portal_title: 'Portal de Productores - Estadio Huracán' } } },
     session: {}, user: { roles: [] } }, 'Prueba', '');

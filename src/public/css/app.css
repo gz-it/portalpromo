@@ -137,7 +137,12 @@ th { background: #eef3f8; font-size: 14px; }
 .overview-facts strong { font-size: 24px; line-height: 1; }
 .overview-facts span { color: var(--muted); font-size: 14px; }
 .summary-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: 18px; overflow: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
-.summary-strip div { min-width: 0; padding: 16px; border-right: 1px solid var(--line); display: grid; gap: 4px; }
+.summary-strip div, .summary-strip > a { min-width: 0; padding: 16px; border-right: 1px solid var(--line); display: grid; gap: 4px; }
+.summary-strip > a { color: var(--ink); text-decoration: none; }
+.summary-strip > a:hover { background: #eef0f3; }
+.summary-strip > a:last-child { border-right: 0; }
+.page-return { margin-bottom: 16px; }
+.page-return a { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; color: var(--ink); font-size: 14px; }
 .summary-strip div:last-child { border-right: 0; }
 .summary-strip strong { font-size: 20px; line-height: 1; }
 .summary-strip span { color: var(--muted); font-size: 14px; }
@@ -322,9 +327,9 @@ input { accent-color: var(--primary); }
   .overview-facts div:first-child { border-left: 0; }
   .completion-overview { grid-template-columns: 1fr; gap: 12px; }
   .summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .summary-strip div { border-right: 0; border-bottom: 1px solid var(--line); }
-  .summary-strip div:nth-child(odd) { border-right: 1px solid var(--line); }
-  .summary-strip div:last-child { border-bottom: 0; }
+  .summary-strip div, .summary-strip > a { border-right: 0; border-bottom: 1px solid var(--line); }
+  .summary-strip div:nth-child(odd), .summary-strip > a:nth-child(odd) { border-right: 1px solid var(--line); }
+  .summary-strip div:last-child, .summary-strip > a:last-child { border-bottom: 0; }
   .detail-band { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .section-heading { align-items: flex-start; flex-direction: column; gap: 4px; }
   .notification-item { align-items: stretch; flex-direction: column; }

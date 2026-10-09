@@ -19,6 +19,15 @@ function optionList(items, selected) {
 function layout(req, title, body, options = {}) {
   const settings = req.app.locals.portalSettings || {};
   const user = req.user;
+  const backRoutes = {
+    '/admin/events': ['/admin', 'Volver al panel'],
+    '/admin/reviews': ['/admin', 'Volver al panel'],
+    '/admin/users': ['/admin', 'Volver al panel'],
+    '/admin/settings': ['/admin', 'Volver al panel'],
+    '/events/new': ['/dashboard', 'Volver a mis eventos'],
+  };
+  const back = user && backRoutes[req.path];
+  const returnLink = back ? `<nav class="page-return" aria-label="Volver"><a href="${back[0]}"><span aria-hidden="true">←</span> ${back[1]}</a></nav>` : '';
   const brandTitle = settings.portal_title || 'Portal de Productores';
   const brandText = brandTitle === 'Portal de Productores - Estadio Huracán'
     ? '<b class="brand-title">Portal de Productores</b><span class="brand-subtitle">Estadio Huracán</span>'
@@ -45,6 +54,7 @@ function layout(req, title, body, options = {}) {
     ${nav}
     <main class="${options.narrow ? 'page narrow' : 'page'}">
       ${flash ? `<div class="toast ${flash.type || 'ok'}">${esc(flash.message)}</div>` : ''}
+      ${returnLink}
       ${body}
     </main>
     <script>window.csrfToken=${JSON.stringify(req.csrfToken || '')}</script>
