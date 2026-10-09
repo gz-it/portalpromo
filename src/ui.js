@@ -15,11 +15,15 @@ function optionList(items, selected) {
 function layout(req, title, body, options = {}) {
   const settings = req.app.locals.portalSettings || {};
   const user = req.user;
+  const brandTitle = settings.portal_title || 'Portal de Productores';
+  const brandText = brandTitle === 'Portal de Productores - Estadio Huracán'
+    ? '<b class="brand-title">Portal de Productores</b><span class="brand-subtitle">Estadio Huracán</span>'
+    : `<b class="brand-title">${esc(brandTitle)}</b>`;
   const flash = req.session.flash;
   delete req.session.flash;
   const nav = user ? `
     <header class="topbar">
-      <a class="brand" href="/dashboard">${settings.logo_attachment_id ? '<img src="/branding/logo" alt="Logo">' : '<span class="brand-mark">PP</span>'}<span>${esc(settings.portal_title || 'Portal de Productores')}</span></a>
+      <a class="brand" href="/dashboard">${settings.logo_attachment_id ? '<img src="/branding/logo" alt="Logo">' : '<span class="brand-mark">PP</span>'}<span class="brand-text">${brandText}</span></a>
       <nav class="top-actions">
         <a class="notification-link" href="/notifications">Notificaciones${user.unread_notifications ? `<span>${user.unread_notifications}</span>` : ''}</a>
         <span class="user-name">${esc(user.first_name)} ${esc(user.last_name)}</span>

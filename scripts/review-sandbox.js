@@ -111,6 +111,7 @@ async function main() {
     assert.match((await producer.request(`/events/${eventId}/modules/seguros`)).text, /Aprobado por administraci/);
     assert.ok((await db.query("select 1 from notifications where user_id=$1 and type='NUEVA_CARGA'", [admin.id])).rowCount);
     console.log('PASS carga, observacion, correccion, aprobacion y avisos internos');
+    assert.match((await producer.request('/notifications')).text, /class="notification-back" href="\/dashboard" aria-label="Volver al panel"/);
     await producer.post(`/events/${eventId}/modules/seguros/entries`, { label:'Cambio posterior',value:'Nueva version' });
     const status = (await db.query("select status from event_modules where event_id=$1 and module_key='seguros'", [eventId])).rows[0].status;
     assert.equal(status, 'CARGADO');
