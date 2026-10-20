@@ -125,3 +125,9 @@ SMTP acepto las dos invitaciones para crear una contrasena propia (48 horas).
 Estado inicial PENDIENTE hasta aceptar la invitacion; no se asigno clave compartida.
 Se creo respaldo previo PRE_ACCESS_HANDOVER; codigo no contiene claves ni enlaces.
 La cuenta de productor de prueba no se modifico en este cambio.
+
+BAJA POSTERIOR DEL PRODUCTOR DE PRUEBA
+Por solicitud del propietario se dio de baja productor/productor:
+status DESHABILITADO, clave aleatoria y sesiones/tokens anteriores invalidados.
+Se conservaron sus 3 eventos y 13 adjuntos asociados, sin borrado fisico del
+registro referenciado por el historial. Respaldo previo PRE_RETIRE_DEMO creado.
