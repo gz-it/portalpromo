@@ -1,0 +1,22 @@
+[Unit]
+Description=Portal de Productores
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=portalpromo
+Group=portalpromo
+WorkingDirectory=/opt/portalpromo
+EnvironmentFile=/etc/portalpromo.env
+ExecStart=/usr/bin/node src/server.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/portalpromo
+
+[Install]
+WantedBy=multi-user.target

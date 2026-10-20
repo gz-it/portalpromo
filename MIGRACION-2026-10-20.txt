@@ -1,0 +1,62 @@
+PORTAL DE PRODUCTORES - PREPARACION DEL VPS DEFINITIVO
+Fecha: 2026-10-20, America/Buenos_Aires
+
+Origen: 149.50.156.217 (portal y CCTV; ambos permanecen activos).
+Destino: 149.50.151.139, SSH 5818.
+Dominio previsto: portalproductores.estadiohuracan.com.
+
+REALIZADO
+- Acceso por clave SSH comprobado; contrasena SSH conservada por acuerdo previo.
+- Ubuntu 24.04, 4 CPU, 4 GB RAM, PostgreSQL 16.15, Node 22.23.3 y Nginx.
+- UFW y Fail2ban; SSH 5818 conservado. 3000 y 5432 solo loopback.
+- Snapshot nuevo cifrado y verificado, con pausa breve y reinicio del portal
+  origen. CCTV no fue detenido.
+- Snapshot transferido con hash SHA-256 coincidente:
+  f6fbbf12126d983470816fadacc89d08ad0e55e218ca36d3b277daed0ce625bf
+- Codigo desde bundle Git y copia realmente desplegada en el servidor origen.
+  El Git HEAD antiguo del origen no se uso como unica evidencia de su codigo.
+- Base nueva con credenciales aleatorias y sin privilegios de superusuario.
+- Restaurados 3 usuarios, 3 eventos, 30 modulos y 16 adjuntos registrados.
+- Conservar SESSION_SECRET para descifrar SMTP; URL y rutas adaptadas al destino.
+- Sesiones copiadas invalidadas; planificador de backups destino pausado para
+  evitar ejecuciones duplicadas antes del cambio definitivo.
+- Systemd con usuario portalpromo y restricciones; archivos privados.
+- Verificacion de 46 archivos de codigo/cargas contra hashes del snapshot;
+  referencia y tamano de los 16 adjuntos comprobados.
+- Pruebas aisladas PostgreSQL de acceso, cargas, revisiones, seguridad y
+  restauracion OK en destino.
+
+ESTADO ACTUAL
+El servicio funciona internamente, pero Nginx no publica todavia el login.
+http://149.50.151.139 muestra un aviso 503 de preparacion intencional.
+No se transmiten claves de usuario por HTTP ni se abrio el puerto 3000.
+No hay certificado HTTPS emitido para el dominio nuevo ni cambio de DNS.
+El servidor de prueba sigue siendo la referencia de los datos nuevos.
+
+BACKUP LOCAL
+C:\Users\Codex\Documents\Respaldos Portal\migracion-2026-10-20.ppr
+Clave separada en el almacen protegido local de recovery-keys (fuera de Git).
+El destino conserva snapshot/clave bajo /root/portal-migration, permisos privados.
+El respaldo incluye secretos: no adjuntarlo ni enviarlo a terceros junto a su clave.
+
+PENDIENTE ANTES DE ACTIVAR
+1. Crear registro DNS A portalproductores -> 149.50.151.139 en estadiohuracan.com.
+2. Emitir y comprobar HTTPS; sustituir configuracion de preparacion por proxy
+   a 127.0.0.1:3000 y redireccion de HTTP a HTTPS.
+3. Congelar cargas en origen y realizar sincronizacion final consistente si hubo
+   cambios desde este snapshot. Preferir otra base nueva y conservar la copia
+   actual como rollback; restore-new-vps.js no sobrescribe instalaciones existentes.
+4. Probar login, eventos y documentos desde el dominio definitivo.
+5. Reactivar planificador de backups solo en el servidor elegido como principal.
+6. Configurar SMTP, backup completo externo y revisar antivirus/2FA pendientes.
+7. Rotar claves de prueba/expuestas y decidir restriccion final de SSH.
+8. No dar de baja ni limpiar el origen hasta confirmar funcionamiento y backup.
+
+SCRIPTS AGREGADOS (SIN SECRETOS)
+scripts/prepare-vps.sh: base Ubuntu nueva; no publica la aplicacion.
+scripts/restore-new-vps.js: restauracion unica a base nueva, config privada.
+scripts/verify-migration.js: integridad de codigo/cargas y adjuntos.
+deploy/portalpromo.service, deploy/nginx-pending.conf,
+deploy/fail2ban-definitivo.conf.
+
+No es un corte a produccion completado: es una copia inicial preparada y validada.
