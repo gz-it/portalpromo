@@ -114,3 +114,14 @@ Un fallo de correo no cambia a FAILED un backup creado correctamente.
 Avisos de fallo usan texto general sin datos tecnicos sensibles.
 Adjunto solo hasta 20 MB; estos respaldos son de BASE DE DATOS, no de adjuntos.
 La copia completa automatica externa de base mas archivos sigue pendiente.
+
+ACCESOS REALES
+Administrador principal: booking@estadiohuracan.com (ADMINISTRADOR).
+Sistemas: gestion@gzit.com.ar (SISTEMAS).
+Se migraron las identidades existentes conservando sus IDs e historial.
+Usuarios cortos admin y sistemas retirados; claves anteriores reemplazadas por
+valores aleatorios y sesiones/tokens anteriores invalidados.
+SMTP acepto las dos invitaciones para crear una contrasena propia (48 horas).
+Estado inicial PENDIENTE hasta aceptar la invitacion; no se asigno clave compartida.
+Se creo respaldo previo PRE_ACCESS_HANDOVER; codigo no contiene claves ni enlaces.
+La cuenta de productor de prueba no se modifico en este cambio.
