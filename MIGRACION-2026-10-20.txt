@@ -79,3 +79,25 @@ ni se puso en mantenimiento el portal anterior sin confirmar el corte.
 Comparacion de 35 tablas funcionales: hashes y cantidades coincidentes al verificar.
 Se excluyeron sesiones, auditoria, backups, settings y actualizaciones, que
 pueden diferir por operacion; no se considera una sincronizacion continua.
+
+CORTE CONFIRMADO Y EJECUTADO
+Autorizacion del propietario: activar el nuevo como principal.
+Origen puesto en mantenimiento Nginx; portalpromo detenido y deshabilitado
+para evitar nuevas escrituras y ejecuciones duplicadas tras reinicio.
+Se volvieron a comparar las 35 tablas funcionales con origen detenido: sin diferencias.
+Destino habilitado por HTTPS; login administrativo real y dashboard comprobados.
+Direccion principal: https://portalproductores.estadiohuracan.com
+Portal viejo: 503 con aviso de traslado; CCTV conserva /cctv/ y TCP 3355 activos.
+Se verifico GET /cctv/ -> 303 a su login y el servicio gzit-dahua activo.
+Backup local de base creado en destino al cortar (CUTOVER, 90679 bytes).
+Planificador de base reactivado en destino, dos veces por semana, lunes/jueves.
+Destinatarios de backups: 0; SMTP aun sin credencial. No hay entrega por email.
+La copia completa externa automatica y el antivirus siguen pendientes.
+
+CONFIGURACIONES DE ROLLBACK (SOLO PARA RECUPERACION CONTROLADA)
+Origen: /root/portalpromo-antes-corte-2026-10-20.conf
+Destino: /root/portal-nginx-antes-apertura-2026-10-20.conf
+No se borraron bases, adjuntos ni codigo del origen.
+No reactivar escrituras en origen sin revisar primero las nuevas cargas del
+destino: una vuelta atras directa despues del corte podria perder cambios recientes.
+Imagen de comprobacion local: capturas/portal-definitivo-activo.jpg en Respaldos Portal.
