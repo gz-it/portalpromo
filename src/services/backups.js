@@ -6,7 +6,7 @@ const sanitize = require('sanitize-filename');
 const config = require('../config');
 const db = require('../db');
 const { pgEnvironment } = require('../utils/pg-environment');
-const { sendMail } = require('../utils/email');
+const { notifyBackup } = require('./backup-notifications');
 const {
   DEFAULT_TIMEZONE,
   isBackupDue,
@@ -36,6 +36,7 @@ async function getBackupSettings() {
     enabled: values.backup_enabled === 'true',
     frequency,
     emails,
+    statusEmails: normalizeEmails(values.backup_status_email),
     email: emails.join(', '),
     weekdays: normalizeWeekdays(values.backup_weekdays),
     time: normalizeTime(values.backup_time),
@@ -58,6 +59,7 @@ async function saveBackupSettings(values, userId) {
     backup_send_file: values.sendFile ? 'true' : 'false',
     backup_retention_days: String(Math.max(1, Number(values.retentionDays) || 30)),
   };
+  if (values.statusEmails !== undefined) settings.backup_status_email = normalizeEmails(values.statusEmails).join(',');
   await db.tx(async (client) => {
     for (const [key, value] of Object.entries(settings)) {
       await client.query(`insert into system_settings (key,value,updated_by,updated_at) values ($1,$2,$3,now())
@@ -86,25 +88,28 @@ async function createBackup({ source = 'MANUAL', userId = null, notify = true } 
   const filename = backupFilename();
   const target = path.join(config.backupPath, filename);
   const record = (await db.query('insert into backup_runs (filename,storage_path,source,status,requested_by) values ($1,$2,$3,$4,$5) returning id', [filename, target, source, 'RUNNING', userId])).rows[0];
+  let size;
   try {
     await run(config.pgDumpBin, ['--format=custom', '--file', target]);
-    const size = fs.statSync(target).size;
+    size = fs.statSync(target).size;
     await db.query("update backup_runs set status='SUCCESS',size_bytes=$2,finished_at=now() where id=$1", [record.id, size]);
     const settings = await getBackupSettings();
     await pruneBackups(settings.retentionDays);
-    if (notify && settings.emails.length) {
-      const link = `${config.appUrl}/systems/backups`;
-      const attachments = settings.sendFile && size <= 20 * 1024 * 1024 ? [{ filename, path: target }] : undefined;
-      const note = settings.sendFile && !attachments ? '\nEl archivo supera 20 MB y no se adjuntó al email.' : '';
-      await sendMail(settings.emails, 'Backup correcto - Portal de Productores', `Se creó ${filename} correctamente.${note}\n\nAdministrar backups: ${link}`, { attachments });
-    }
-    return { id: record.id, filename, target, size };
   } catch (error) {
     await db.query("update backup_runs set status='FAILED',detail=$2,finished_at=now() where id=$1", [record.id, error.message]);
     const settings = await getBackupSettings().catch(() => ({ emails: [] }));
-    if (settings.emails.length) await sendMail(settings.emails, 'Falló el backup - Portal de Productores', error.message).catch(() => {});
+    if (notify) await notifyBackup(settings, { ok: false, filename }).catch(() => {});
     throw error;
   }
+  let deliveries = [];
+  if (notify) {
+    const settings = await getBackupSettings();
+    deliveries = await notifyBackup(settings, { ok: true, filename, target, size });
+    if (deliveries.some(delivery => !delivery.sent)) {
+      await db.query('update backup_runs set detail=$2 where id=$1', [record.id, 'Respaldo creado; no se pudo enviar uno o más avisos por correo.']);
+    }
+  }
+  return { id: record.id, filename, target, size, deliveries };
 }
 
 const backupUpload = multer({

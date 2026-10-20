@@ -101,3 +101,16 @@ No se borraron bases, adjuntos ni codigo del origen.
 No reactivar escrituras en origen sin revisar primero las nuevas cargas del
 destino: una vuelta atras directa despues del corte podria perder cambios recientes.
 Imagen de comprobacion local: capturas/portal-definitivo-activo.jpg en Respaldos Portal.
+
+CORREO Y BACKUPS CONFIGURADOS
+El propietario ingreso privadamente la credencial SMTP y confirmo recepcion de prueba.
+Programacion: lunes y jueves 03:00, America/Argentina/Buenos_Aires.
+Destinatarios del archivo de base: booking@estadiohuracan.com y gabriel.cason@akemusic.com.
+Control de exito/error sin archivo: gestion@gzit.com.ar.
+Prueba real: backup portal-2026-10-20T18-27-20-351Z.dump, 101252 bytes.
+SMTP acepto los tres envios, dos con adjunto y uno sin adjunto; no se confirma
+la llegada a cada bandeja hasta que la confirmen los destinatarios.
+Un fallo de correo no cambia a FAILED un backup creado correctamente.
+Avisos de fallo usan texto general sin datos tecnicos sensibles.
+Adjunto solo hasta 20 MB; estos respaldos son de BASE DE DATOS, no de adjuntos.
+La copia completa automatica externa de base mas archivos sigue pendiente.

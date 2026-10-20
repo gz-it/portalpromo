@@ -963,6 +963,7 @@ routes.get('/systems', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res
     <section class="panel"><h2>Probar correo</h2><p>Estado: <b>${mail.host && mail.user && (mail.hasStoredPassword || config.smtp.password) ? 'Configurado' : 'Pendiente'}</b></p><form method="post" action="/systems/mail/test" class="form-stack"><input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Enviar prueba a<input name="email" type="email" value="${esc(req.user.email)}" required></label><button>Enviar prueba</button></form></section>
     <form method="post" action="/systems/backups/settings" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2 class="span">Backup automático</h2><label>Frecuencia<select name="frequency"><option value="daily" ${backup.frequency === 'daily' ? 'selected' : ''}>Diario</option><option value="weekly" ${backup.frequency === 'weekly' ? 'selected' : ''}>Una vez por semana</option><option value="twice_weekly" ${backup.frequency === 'twice_weekly' ? 'selected' : ''}>Dos veces por semana</option></select></label><label>Hora<input name="time" type="time" value="${esc(backup.time)}" required></label><label>Primer día<select name="weekday_1">${weekdayOptions(backup.weekdays[0])}</select></label><label>Segundo día<select name="weekday_2">${weekdayOptions(backup.weekdays[1])}</select></label><label>Email destinatario 1<input name="email_1" type="email" value="${esc(backup.emails[0])}" placeholder="sistemas@empresa.com"></label><label>Email destinatario 2<input name="email_2" type="email" value="${esc(backup.emails[1])}" placeholder="responsable@empresa.com"></label><label>Conservar durante<input name="retention_days" type="number" min="1" value="${backup.retentionDays}"></label><label class="check-label"><input name="enabled" type="checkbox" ${backup.enabled ? 'checked' : ''}> Activar backup automático</label><label class="check-label"><input name="send_file" type="checkbox" ${backup.sendFile ? 'checked' : ''}> Adjuntar al email si pesa menos de 20 MB</label><button class="primary span">Guardar automatización</button></form>
     <section class="panel"><h2>Acciones de backup</h2><form method="post" action="/systems/backups/run"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button class="primary">Crear backup ahora</button></form><form method="post" action="/systems/backups/upload?_csrf=${req.csrfToken}" enctype="multipart/form-data" class="form-stack upload-form"><label>Subir archivo .dump<input name="file" type="file" accept=".dump" required></label><progress hidden max="100"></progress><button>Subir backup</button></form></section>
+    <form method="post" action="/systems/backups/status-email" class="panel form-stack"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2>Avisos a Sistemas</h2><label>Email de éxito o error (sin adjunto)<input name="email" type="email" value="${esc(backup.statusEmails[0] || '')}" required></label><button>Guardar destinatario de avisos</button></form>
   </div><section class="dossier-section"><div class="section-heading"><h2>Backups disponibles</h2><span>${backups.rowCount} registros recientes</span></div>${table(['Archivo','Estado','Tamaño','Fecha','Acciones'], backupRows)}</section>`));
 });
 
@@ -988,6 +989,14 @@ routes.post('/systems/backups/settings', requireLogin, requireRole(ROLES.SYSTEMS
   await saveBackupSettings({ enabled:Boolean(req.body.enabled), frequency:req.body.frequency, weekdays:[req.body.weekday_1, req.body.weekday_2], time:req.body.time, emails:[req.body.email_1, req.body.email_2], sendFile:Boolean(req.body.send_file), retentionDays:req.body.retention_days }, req.user.id);
   await audit(req.user.id, 'configurar_backups', 'system_settings', 'backups');
   flash(req, 'ok', 'Automatización de backups guardada.');
+  res.redirect('/systems');
+});
+
+routes.post('/systems/backups/status-email', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
+  const email = parseBody(z.string().trim().email(), req.body.email);
+  await saveBackupSettings({ ...await getBackupSettings(), statusEmails: [email] }, req.user.id);
+  await audit(req.user.id, 'configurar_avisos_backup', 'system_settings', 'backups');
+  flash(req, 'ok', 'Destinatario de avisos guardado. Recibirá el resultado sin adjunto.');
   res.redirect('/systems');
 });
 
