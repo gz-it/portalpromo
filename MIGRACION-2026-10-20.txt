@@ -60,3 +60,10 @@ deploy/portalpromo.service, deploy/nginx-pending.conf,
 deploy/fail2ban-definitivo.conf.
 
 No es un corte a produccion completado: es una copia inicial preparada y validada.
+
+CORREO PREPARADO EN DESTINO
+Remitente: productores@estadiohuracan.com, Google Workspace SMTP 465 con TLS.
+Sin credencial de aplicacion todavia y sin correos enviados.
+La configuracion se realizo solo en destino. Antes de una sincronizacion final,
+preservar los settings SMTP del destino para no reemplazarlos por los del origen.
+No copiar ni publicar secretos al documentar ese proceso.
