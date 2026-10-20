@@ -67,3 +67,15 @@ Sin credencial de aplicacion todavia y sin correos enviados.
 La configuracion se realizo solo en destino. Antes de una sincronizacion final,
 preservar los settings SMTP del destino para no reemplazarlos por los del origen.
 No copiar ni publicar secretos al documentar ese proceso.
+
+DNS Y HTTPS VERIFICADOS
+portalproductores.estadiohuracan.com resuelve a 149.50.151.139.
+Certificado Let's Encrypt emitido, vencimiento 2027-01-18; certbot.timer activo.
+Hook de renovacion comprueba nginx -t antes de recargar Nginx.
+HTTP redirige al dominio HTTPS; certificado validado externamente sin excepciones.
+HTTPS /health responde 200 y confirma el servicio interno activo.
+La raiz sigue en preparacion (503 intencional); no se habilito el nuevo login
+ni se puso en mantenimiento el portal anterior sin confirmar el corte.
+Comparacion de 35 tablas funcionales: hashes y cantidades coincidentes al verificar.
+Se excluyeron sesiones, auditoria, backups, settings y actualizaciones, que
+pueden diferir por operacion; no se considera una sincronizacion continua.
