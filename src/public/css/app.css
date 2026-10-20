@@ -142,6 +142,7 @@ th { background: #eef3f8; font-size: 14px; }
 .summary-strip > a:hover { background: #eef0f3; }
 .summary-strip > a:last-child { border-right: 0; }
 .page-return { margin-bottom: 16px; }
+.danger { color: #b42318; border-color: #f1b4b8; background: #fff; }
 .page-return a { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; color: var(--ink); font-size: 14px; }
 .summary-strip div:last-child { border-right: 0; }
 .summary-strip strong { font-size: 20px; line-height: 1; }

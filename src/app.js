@@ -30,6 +30,7 @@ const { audit } = require('./utils/audit');
 const { sendMail, verifyMail, getMailSettings, saveMailSettings } = require('./utils/email');
 const { sendVerification, confirmEmail, notifyRegistrationAdmins } = require('./services/registration');
 const { sendInvitation, acceptInvitation } = require('./services/invitations');
+const { removeUser } = require('./services/user-removal');
 const { hashPassword, verifyPassword, makeToken, hashToken, safeWebUrl } = require('./utils/security');
 const { esc, layout, authPage, eventHeader, table, optionList } = require('./ui');
 const { loadSettings, setSetting } = require('./services/settings');
@@ -703,9 +704,36 @@ routes.get('/admin', requireLogin, requireRole(ROLES.ADMIN), async (req, res) =>
 });
 
 routes.get('/admin/users', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
-  const users = await db.query(`select u.*, count(e.id) event_count, array_remove(array_agg(r.name), null) roles from users u left join events e on e.owner_user_id=u.id left join user_roles ur on ur.user_id=u.id left join roles r on r.id=ur.role_id group by u.id order by u.created_at desc`);
-  const rows = users.rows.map((u)=>`<tr><td>${esc(u.first_name)} ${esc(u.last_name)}</td><td>${esc(u.email)}</td><td>${esc(u.phone)}</td><td>${u.invitation_pending ? 'Invitación pendiente' : esc(u.status)}</td><td>${esc((u.roles || []).join(', '))}</td><td>${u.event_count}</td><td>${u.invitation_pending && u.status === 'PENDIENTE' ? `<form method="post" action="/admin/users/${u.id}/invitation"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Reenviar invitación</button></form>` : ''}<form method="post" action="/admin/users/${u.id}/status"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="status">${optionList(['PENDIENTE','ACTIVO','BLOQUEADO','DESHABILITADO'], u.status)}</select><button>Estado</button></form><form method="post" action="/admin/users/${u.id}/role"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="role">${optionList(['PRODUCTOR','GERENCIADORA','ADMINISTRADOR','SISTEMAS'], (u.roles || [])[0])}</select><button>Rol</button></form></td></tr>`);
+  const showDisabled = req.query.show === 'disabled';
+  const users = await db.query(`select u.*, count(distinct e.id) event_count, array_remove(array_agg(distinct r.name), null) roles from users u left join events e on e.owner_user_id=u.id left join user_roles ur on ur.user_id=u.id left join roles r on r.id=ur.role_id where (u.status='DESHABILITADO')=$1 group by u.id order by u.created_at desc`, [showDisabled]);
+  const rows = users.rows.map((u)=>{
+    const actions = showDisabled ? `<form method="post" action="/admin/users/${u.id}/restore"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Restaurar y enviar invitación</button></form>` : `${u.invitation_pending && u.status === 'PENDIENTE' ? `<form method="post" action="/admin/users/${u.id}/invitation"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Reenviar invitación</button></form>` : ''}<form method="post" action="/admin/users/${u.id}/status"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="status">${optionList(['PENDIENTE','ACTIVO','BLOQUEADO','DESHABILITADO'], u.status)}</select><button>Guardar estado</button></form><form method="post" action="/admin/users/${u.id}/role"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="role">${optionList(['PRODUCTOR','GERENCIADORA','ADMINISTRADOR','SISTEMAS'], (u.roles || [])[0])}</select><button>Guardar rol</button></form>${u.id !== req.user.id ? `<a class="button danger" href="/admin/users/${u.id}/delete">Eliminar usuario</a>` : '<small>Tu cuenta</small>'}`;
+    return `<tr><td>${esc(u.first_name)} ${esc(u.last_name)}</td><td>${esc(u.email)}</td><td>${esc(u.phone)}</td><td>${showDisabled ? 'Eliminado / deshabilitado' : u.invitation_pending ? 'Invitación pendiente' : esc(u.status)}</td><td>${esc((u.roles || []).join(', '))}</td><td>${u.event_count}</td><td>${actions}</td></tr>`;
+  });
+  rows.unshift(`<tr><td colspan="7"><nav class="row-actions" aria-label="Lista de usuarios"><a class="button ${showDisabled ? '' : 'primary'}" href="/admin/users">Usuarios</a><a class="button ${showDisabled ? 'primary' : ''}" href="/admin/users?show=disabled">Eliminados</a></nav></td></tr>`);
   res.send(layout(req, 'Productores', `<section class="toolbar"><div><h1>Productores y usuarios</h1><p>Crear accesos y administrar usuarios existentes.</p></div></section><form method="post" action="/admin/users" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2 class="span">Crear usuario</h2><label>Nombre<input name="first_name" required></label><label>Apellido<input name="last_name" required></label><label class="span">Email de acceso<input name="email" type="email" required autocomplete="off"></label><label>Tipo de usuario<select name="role"><option value="PRODUCTOR">Productor</option><option value="SISTEMAS">Sistemas</option></select></label><button class="primary span">Crear y enviar invitación</button></form><section class="dossier-section">${table(['Nombre','Email','Teléfono','Estado','Roles','Eventos','Acciones'], rows)}</section>`));
+});
+
+routes.get('/admin/users/:id/delete', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+  if (req.params.id === req.user.id) return res.status(400).send('No puede eliminar su propia cuenta.');
+  const user = (await db.query('select u.*, (select count(*) from events where owner_user_id=u.id)::int event_count from users u where id=$1', [req.params.id])).rows[0];
+  if (!user) return res.status(404).send('Usuario no encontrado');
+  res.send(layout(req, 'Eliminar usuario', `<a class="button" href="/admin/users">← Volver a usuarios</a><section class="dossier-section"><h1>Eliminar usuario</h1><p><b>${esc(user.first_name)} ${esc(user.last_name)}</b> · ${esc(user.email)}</p><p>Se bloqueará el acceso y se cerrarán sus sesiones. Sus ${user.event_count} eventos, documentos e historial se conservarán. Podrás restaurarlo desde Eliminados.</p><form method="post" class="form-stack"><input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Escribí ELIMINAR para confirmar<input name="confirmation" required pattern="ELIMINAR" autocomplete="off"></label><div class="row-actions"><a class="button" href="/admin/users">Cancelar</a><button class="danger">Eliminar usuario</button></div></form></section>`, { narrow: true }));
+});
+routes.post('/admin/users/:id/delete', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+  if (req.body.confirmation !== 'ELIMINAR') return res.status(400).send('Escriba ELIMINAR para confirmar.');
+  try { await removeUser(req.user.id, req.params.id); }
+  catch (error) { if ([400,404].includes(error.status)) return res.status(error.status).send(error.message); throw error; }
+  flash(req, 'ok', 'Usuario eliminado. Se conservaron sus eventos y documentos.');
+  res.redirect('/admin/users');
+});
+routes.post('/admin/users/:id/restore', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+  const user = (await db.query("update users set status='PENDIENTE',invitation_pending=true,email_verified_at=null,email_verification_required=true,updated_at=now() where id=$1 and status='DESHABILITADO' returning id,email", [req.params.id])).rows[0];
+  if (!user) return res.status(404).send('Usuario eliminado no encontrado');
+  await audit(req.user.id, 'restaurar_usuario', 'users', user.id);
+  try { await sendInvitation(user); flash(req, 'ok', 'Usuario restaurado. Se envió una invitación para crear una nueva contraseña.'); }
+  catch { flash(req, 'error', 'Usuario restaurado, pero no se pudo enviar el correo. Reenviá la invitación desde Usuarios.'); }
+  res.redirect('/admin/users');
 });
 
 routes.post('/admin/users', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
