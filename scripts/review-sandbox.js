@@ -129,6 +129,12 @@ async function main() {
     assert.match((await producer.request(`/events/${eventId}/modules/seguros`)).text, /Falta firma/);
     await producer.post(`/events/${eventId}/modules/seguros/entries`, { label:'Correccion',value:'Firmado' });
     await administrator.post(`/events/${eventId}/review/seguros`, { status:'APROBADO' });
+    const reviews = (await db.query("select title,message from notifications where user_id=(select id from users where email='producer@example.invalid') and event_id=$1 and type='REVISION_MODULO'", [eventId])).rows;
+    assert.ok(reviews.some(item => item.title.includes('Prueba Admin aprobó: Seguros') && item.message.includes('Prueba Admin aprobó el módulo Seguros.')));
+    assert.ok(reviews.some(item => item.title.includes('Prueba Admin observó: Seguros') && item.message.includes('Comentario: Falta firma')));
+    assert.ok(outbox.some(mail => mail[1].includes('Prueba Admin aprobó: Seguros') && mail[2].includes('Prueba Admin aprobó el módulo Seguros.')));
+    assert.ok(outbox.some(mail => mail[1].includes('Prueba Admin observó: Seguros') && mail[2].includes('Comentario: Falta firma')));
+    console.log('PASS avisos internos y correos identifican administrador, modulo y comentario');
     assert.match((await producer.request(`/events/${eventId}/modules/seguros`)).text, /Aprobado por administraci/);
     assert.ok((await db.query("select 1 from notifications where user_id=$1 and type='NUEVA_CARGA'", [admin.id])).rowCount);
     console.log('PASS carga, observacion, correccion, aprobacion y avisos internos');
