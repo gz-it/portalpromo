@@ -11,8 +11,18 @@ function moduleNotificationTitle(action, moduleKey, eventName) {
   return `${action}: ${moduleName(moduleKey)} - ${eventName}`;
 }
 
-function reviewNotificationMessage(moduleKey, status, comment) {
+function notificationActorName(actor) {
+  return [actor?.first_name, actor?.last_name].filter(Boolean).join(' ').trim() || 'Administracion';
+}
+
+function reviewNotificationAction(status, actor) {
+  const action = { APROBADO: 'aprobó', OBSERVADO: 'observó', PENDIENTE: 'marcó como pendiente' }[status] || 'revisó';
+  return `${notificationActorName(actor)} ${action}`;
+}
+
+function reviewNotificationMessage(moduleKey, status, comment, actor) {
   const detail = comment ? ` Comentario: ${comment}` : '';
+  if (actor) return `${reviewNotificationAction(status, actor)} el módulo ${moduleName(moduleKey)}.${detail}`;
   return `${moduleName(moduleKey)} fue marcado como ${status}.${detail}`;
 }
 
@@ -61,4 +71,4 @@ async function notifyEventOwner(eventId, type, title, message, link) {
   }
 }
 
-module.exports = { notifyAdminsOfProducerUpdate, notifyEventOwner, reviewNotificationMessage, moduleNotificationTitle };
+module.exports = { notifyAdminsOfProducerUpdate, notifyEventOwner, reviewNotificationMessage, moduleNotificationTitle, notificationActorName, reviewNotificationAction };

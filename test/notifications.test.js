@@ -2,7 +2,17 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const db = require('../src/db');
 const { MODULES } = require('../src/constants');
-const { moduleNotificationTitle, notifyAdminsOfProducerUpdate } = require('../src/services/notifications');
+const { moduleNotificationTitle, notifyAdminsOfProducerUpdate, reviewNotificationMessage, reviewNotificationAction, notificationActorName } = require('../src/services/notifications');
+
+test('reviews identify the authenticated reviewer, action, module and comment', () => {
+  const actor = { first_name: 'Gabriel', last_name: 'Cason' };
+  assert.equal(reviewNotificationMessage('seguros', 'APROBADO', '', actor), 'Gabriel Cason aprobó el módulo Seguros.');
+  assert.equal(reviewNotificationMessage('seguros', 'OBSERVADO', 'Falta firma', actor), 'Gabriel Cason observó el módulo Seguros. Comentario: Falta firma');
+  assert.equal(reviewNotificationAction('PENDIENTE', actor), 'Gabriel Cason marcó como pendiente');
+  assert.equal(reviewNotificationAction('OTRO', actor), 'Gabriel Cason revisó');
+  assert.equal(notificationActorName({ first_name: 'Gabriel' }), 'Gabriel');
+  assert.equal(notificationActorName({}), 'Administracion');
+});
 
 test('notification titles identify every module and event', () => {
   for (const module of MODULES) {
