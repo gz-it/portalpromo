@@ -7,6 +7,10 @@ function moduleName(moduleKey) {
   return MODULES.find((module) => module.key === moduleKey)?.name || moduleKey;
 }
 
+function moduleNotificationTitle(action, moduleKey, eventName) {
+  return `${action}: ${moduleName(moduleKey)} - ${eventName}`;
+}
+
 function reviewNotificationMessage(moduleKey, status, comment) {
   const detail = comment ? ` Comentario: ${comment}` : '';
   return `${moduleName(moduleKey)} fue marcado como ${status}.${detail}`;
@@ -25,13 +29,13 @@ async function notifyAdminsOfProducerUpdate(eventId, moduleKey, actorId) {
       from users u join user_roles ur on ur.user_id=u.id join roles r on r.id=ur.role_id
       where r.name=$5 and u.status='ACTIVO'`, [
       eventId,
-      `Nueva carga en ${context.event_name}`,
+      moduleNotificationTitle('Nueva carga', moduleKey, context.event_name),
       `${context.actor_name} actualizo ${moduleName(moduleKey)}.`,
       `/events/${eventId}/modules/${moduleKey}`,
       ROLES.ADMIN,
     ]);
     const recipients = await db.query(`select distinct u.email from users u join user_roles ur on ur.user_id=u.id join roles r on r.id=ur.role_id where r.name=$1 and u.status='ACTIVO'`, [ROLES.ADMIN]);
-    const subject = `Nueva carga en ${context.event_name}`;
+    const subject = moduleNotificationTitle('Nueva carga', moduleKey, context.event_name);
     const message = `${context.actor_name} actualizó ${moduleName(moduleKey)}.`;
     const results = await Promise.allSettled(recipients.rows.map((recipient) => sendMail(recipient.email, subject, `${message}\n\nAbrir: ${config.appUrl}/events/${eventId}/modules/${moduleKey}`)));
     for (const result of results) {
@@ -57,4 +61,4 @@ async function notifyEventOwner(eventId, type, title, message, link) {
   }
 }
 
-module.exports = { notifyAdminsOfProducerUpdate, notifyEventOwner, reviewNotificationMessage };
+module.exports = { notifyAdminsOfProducerUpdate, notifyEventOwner, reviewNotificationMessage, moduleNotificationTitle };

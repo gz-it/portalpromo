@@ -35,7 +35,7 @@ const { hashPassword, verifyPassword, makeToken, hashToken, safeWebUrl } = requi
 const { esc, layout, authPage, eventHeader, table, optionList } = require('./ui');
 const { loadSettings, setSetting } = require('./services/settings');
 const { initModules, loadModuleStatuses, markLoaded } = require('./services/events');
-const { notifyEventOwner, reviewNotificationMessage } = require('./services/notifications');
+const { notifyEventOwner, reviewNotificationMessage, moduleNotificationTitle } = require('./services/notifications');
 const { buildEventChecklist, summarizeChecklist } = require('./services/checklist');
 const { upload, saveAttachment, resolveAttachment } = require('./services/storage');
 const { workbookTemplateBuffer, parseStaff } = require('./services/excel');
@@ -465,7 +465,7 @@ routes.post('/admin/events/:eventId/modules/:moduleKey/documents', requireLogin,
   const attachment = await saveAttachment({ file:req.file, eventId:req.event.id, moduleKey:key, userId:req.user.id });
   await db.query('insert into module_entries (event_id,module_key,label,value,observation,attachment_id,created_by) values ($1,$2,$3,$4,$5,$6,$7)', [req.event.id, key, req.body.label, req.body.value, req.body.observation, attachment.id, req.user.id]);
   await audit(req.user.id, 'publicar_documento_administrativo', 'attachments', attachment.id, { event_id:req.event.id, module:key });
-  await notifyEventOwner(req.event.id, 'DOCUMENTO_ADMINISTRATIVO', `Nuevo documento de administración: ${req.event.name}`, `Administración publicó “${req.body.label}” en ${MODULES.find((module) => module.key === key)?.name || key}.`, `/events/${req.event.id}/modules/${key}`);
+  await notifyEventOwner(req.event.id, 'DOCUMENTO_ADMINISTRATIVO', moduleNotificationTitle('Nuevo documento de administración', key, req.event.name), `Administración publicó “${req.body.label}” en ${MODULES.find((module) => module.key === key)?.name || key}.`, `/events/${req.event.id}/modules/${key}`);
   flash(req, 'ok', 'Documento publicado y productor notificado.');
   res.redirect(`/events/${req.event.id}/modules/${key}`);
 });
@@ -579,7 +579,7 @@ routes.post('/events/:eventId/ticketera/decision', requireLogin, loadAuthorizedE
   if (req.body.decision === 'OBSERVADO' && !req.body.comment) { flash(req, 'error', 'El comentario es obligatorio al observar.'); return res.redirect(`/events/${req.event.id}/modules/ticketera`); }
   await db.query('insert into ticketing_approvals (event_id,decision,comment,created_by) values ($1,$2,$3,$4)', [req.event.id, req.body.decision, req.body.comment, req.user.id]);
   await audit(req.user.id, 'decision_ticketera', 'events', req.event.id, { decision: req.body.decision });
-  await notifyEventOwner(req.event.id, 'REVISION_TICKETERA', `Revision de ticketera: ${req.event.name}`, reviewNotificationMessage('ticketera', req.body.decision, req.body.comment), `/events/${req.event.id}/modules/ticketera`);
+  await notifyEventOwner(req.event.id, 'REVISION_TICKETERA', moduleNotificationTitle('Revision', 'ticketera', req.event.name), reviewNotificationMessage('ticketera', req.body.decision, req.body.comment), `/events/${req.event.id}/modules/ticketera`);
   res.redirect(`/events/${req.event.id}/modules/ticketera`);
 });
 
@@ -592,7 +592,7 @@ routes.post('/events/:eventId/review/:moduleKey', requireLogin, loadAuthorizedEv
     await client.query('insert into module_status_history (event_id,module_key,previous_status,new_status,observation,created_by) values ($1,$2,$3,$4,$5,$6)', [req.event.id, req.params.moduleKey, previous, req.body.status, req.body.observation, req.user.id]);
   });
   await audit(req.user.id, 'revision_modulo', 'events', req.event.id, { module: req.params.moduleKey, status: req.body.status });
-  await notifyEventOwner(req.event.id, 'REVISION_MODULO', `Revision de ${req.event.name}`, reviewNotificationMessage(req.params.moduleKey, req.body.status, req.body.observation), `/events/${req.event.id}/modules/${req.params.moduleKey}`);
+  await notifyEventOwner(req.event.id, 'REVISION_MODULO', moduleNotificationTitle('Revision', req.params.moduleKey, req.event.name), reviewNotificationMessage(req.params.moduleKey, req.body.status, req.body.observation), `/events/${req.event.id}/modules/${req.params.moduleKey}`);
   flash(req, 'ok', 'Revision guardada y productor notificado.');
   res.redirect(`/events/${req.event.id}/modules/${req.params.moduleKey}`);
 });
