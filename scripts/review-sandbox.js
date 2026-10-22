@@ -34,6 +34,7 @@ async function main() {
     process.env.STORAGE_PATH = path.join(directory, 'uploads');
     process.env.BACKUP_PATH = path.join(directory, 'backups');
     process.env.SESSION_SECURE = 'false';
+    process.env.NODE_ENV = 'test';
     process.env.SESSION_SECRET = randomUUID();
     process.env.APP_URL = 'http://localhost';
     db = require('../src/db');

@@ -1,3 +1,6 @@
+ULTIMA REVISION DEL VPS DEFINITIVO: SEGURIDAD-2026-10-22.txt
+El texto siguiente es historico y corresponde al servidor de prueba.
+
 PORTAL DE PRODUCTORES - REVISION 2026-10-08
 
 Protecciones aplicadas

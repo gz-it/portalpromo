@@ -25,7 +25,7 @@ function backupPaths(output) {
 }
 
 async function writeZip(directory, output, password) {
-  if (!password || password.length < 24) throw new Error('La clave ZIP debe tener al menos 24 caracteres');
+  if (!password || password.length < 12) throw new Error('La clave ZIP debe tener al menos 12 caracteres');
   if (!archiver.isRegisteredFormat('zip-encrypted')) archiver.registerFormat('zip-encrypted', require('archiver-zip-encrypted'));
   const archive = archiver.create('zip-encrypted', { zlib: { level: 8 }, encryptionMethod: 'aes256', password });
   const stream = fs.createWriteStream(output, { flags: 'wx', mode: 0o600 });
@@ -111,7 +111,7 @@ async function main() {
     // Start recovered code against the restored database, without server.js schedulers.
     fs.symlinkSync(path.join(config.root, 'node_modules'), path.join(code, 'node_modules'), 'dir');
     const check = `const app=require('./src/app');const db=require('./src/db');const s=app.listen(0,'127.0.0.1',async()=>{try{const r=await fetch('http://127.0.0.1:'+s.address().port+'/login');if(r.status!==200)throw Error('login');console.log('RESTORED_APP_OK');}catch(e){process.exitCode=1;}finally{s.close();await db.pool.end();}});`;
-    const result = command(process.execPath, ['-e', check], { cwd: code, env: { ...process.env, DATABASE_URL: target.toString(), STORAGE_PATH: uploads, BACKUP_PATH: path.join(temp, 'backups'), SESSION_SECURE: 'false', APP_URL: 'http://127.0.0.1' } });
+    const result = command(process.execPath, ['-e', check], { cwd: code, env: { ...process.env, NODE_ENV: 'test', DATABASE_URL: target.toString(), STORAGE_PATH: uploads, BACKUP_PATH: path.join(temp, 'backups'), SESSION_SECURE: 'false', APP_URL: 'http://127.0.0.1' } });
     if (!result.includes('RESTORED_APP_OK')) throw new Error('No inicio el portal recuperado');
     const recoveryZip = path.join(temp, 'recuperacion.zip');
     await writeZip(staging, recoveryZip, fs.readFileSync(zipKeyFile, 'utf8').trim());

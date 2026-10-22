@@ -28,7 +28,7 @@ test('ZIP encrypts file contents and refuses overwrite or weak passwords', async
     fs.writeFileSync(path.join(source, 'data.txt'), 'private-backup-information');
     const output = path.join(dir, 'backup.zip');
     await assert.rejects(writeZip(source, output, 'short'));
-    await writeZip(source, output, 'test-only-password-with-32-characters');
+    await writeZip(source, output, 'test-key-123');
     const before = fs.readFileSync(output);
     assert.equal(before.subarray(0, 2).toString(), 'PK');
     assert.equal(before.includes(Buffer.from('private-backup-information')), false);

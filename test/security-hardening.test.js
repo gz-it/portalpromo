@@ -10,6 +10,7 @@ const config = require('../src/config');
 const { safeWebUrl } = require('../src/utils/security');
 const { pgEnvironment } = require('../src/utils/pg-environment');
 const { attachUser } = require('../src/middleware/auth');
+const db = require('../src/db');
 
 test('inactive sessions lose authenticated access without a database lookup', async () => {
   const req = { session: { userId: 'expired', lastActiveAt: Date.now() - 31 * 60 * 1000 } };
@@ -17,6 +18,17 @@ test('inactive sessions lose authenticated access without a database lookup', as
   await attachUser(req, {}, () => { continued = true; });
   assert.equal(req.session.userId, undefined);
   assert.equal(continued, true);
+});
+
+test('blocked users are removed before any route or template sees an authenticated user', async () => {
+  const original = db.query;
+  db.query = async () => ({ rows: [{ id: 'blocked', status: 'BLOQUEADO', roles: ['SISTEMAS'] }] });
+  try {
+    const req = { session: { userId: 'blocked' } };
+    await attachUser(req, {}, () => {});
+    assert.equal(req.user, null);
+    assert.equal(req.session.userId, undefined);
+  } finally { db.query = original; }
 });
 
 test('database backup credentials are decoded into process environment', () => {

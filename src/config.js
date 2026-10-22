@@ -16,6 +16,7 @@ const config = {
   sessionSecret: process.env.SESSION_SECRET || 'dev-only-change-me',
   sessionSecure: bool(process.env.SESSION_SECURE, false),
   maxUploadSizeMb: int(process.env.MAX_UPLOAD_SIZE_MB, 200),
+  uploadAntivirus: bool(process.env.UPLOAD_ANTIVIRUS, false),
   allowedExtensions: (process.env.ALLOWED_FILE_EXTENSIONS || 'pdf,jpg,jpeg,png,webp,xls,xlsx,csv,doc,docx').split(',').map((x) => x.trim().toLowerCase()),
   storageDriver: process.env.STORAGE_DRIVER || 'local',
   storagePath: path.resolve(root, process.env.STORAGE_PATH || './storage/uploads'),
@@ -44,6 +45,9 @@ if (!config.databaseUrl && config.env !== 'test') {
 }
 if (config.env === 'production' && (config.sessionSecret === 'dev-only-change-me' || config.sessionSecret.length < 32)) {
   throw new Error('SESSION_SECRET debe ser un secreto de al menos 32 caracteres.');
+}
+if (config.env === 'production' && (!config.sessionSecure || new URL(config.appUrl).protocol !== 'https:')) {
+  throw new Error('Produccion requiere APP_URL HTTPS y SESSION_SECURE=true.');
 }
 
 module.exports = config;

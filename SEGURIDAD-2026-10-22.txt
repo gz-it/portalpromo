@@ -1,0 +1,88 @@
+PORTAL DE PRODUCTORES - REVISION Y REFUERZO DE SEGURIDAD
+Fecha: 22/10/2026. Alcance: portalproductores.estadiohuracan.com,
+VPS definitivo 149.50.151.139 y codigo del portal. No se modifico CCTV.
+
+RESULTADO
+Se corrigieron puntos concretos y se verifico el funcionamiento. No es una
+certificacion, un pentest independiente ni una garantia de invulnerabilidad.
+
+CORREGIDO Y APLICADO
+- Eliminada la excepcion UFW que habilitaba todos los puertos desde una IP.
+- Deshabilitados Postfix y SNMP: sin listeners locales en TCP 25 ni UDP 161.
+  El correo del portal sigue usando SMTP saliente de Google, no Postfix.
+- PostgreSQL y Node limitados a loopback; firewall deniega entradas no autorizadas.
+- ClamAV activo con firmas actualizadas automaticamente. Las cargas comunes,
+  incluidas las planillas de personal, se examinan antes del manejador de negocio.
+  Ante deteccion, error o timeout se rechaza y elimina el archivo temporal.
+  No se inspecciona el contenido cifrado de los respaldos de restauracion:
+  estos tienen un circuito separado, exclusivo de Sistemas y con reautenticacion.
+- Limites de archivos y archivos comprimidos en ClamAV. Un resultado limpio
+  significa que no detecto amenazas conocidas, no que un documento sea inocuo.
+- Excel de personal: maximo 10 MB, 5000 filas y 50 columnas; celdas hasta 1000
+  caracteres, dos importaciones simultaneas y procesamiento en worker limitado
+  a 128 MB de heap principal, 32 MB joven y 15 segundos. No bloquea el hilo web.
+  El limite del heap no incluye toda la memoria nativa del proceso.
+- Servicio sin privilegios ni capacidades, restricciones de namespaces,
+  dispositivos y kernel; permisos privados por defecto y directorios de datos
+  sin ejecucion directa. El codigo del VPS es propiedad de root, no del proceso web.
+- HTTPS/cookies seguras obligatorios en produccion. Los usuarios bloqueados
+  dejan de estar autenticados antes de entrar a rutas o generar plantillas.
+- Nginx rechaza hosts ajenos, rutas internas/ocultas y metodos innecesarios;
+  limita conexiones/ritmo por IP y tiempos de recepcion. TLS 1.2/1.3 con AEAD.
+- Aplicadas actualizaciones disponibles no diferidas, incluido Node 22.23.4.
+  Actualizaciones automaticas Ubuntu habilitadas, sin reinicio automatico.
+  Los paquetes de terceros, incluido NodeSource, requieren revision periodica.
+- Clave ZIP de 12 caracteres aceptada tambien en la restauracion web.
+  Los respaldos anteriores NO se recifraron y requieren su clave original.
+
+VERIFICADO
+- node --test; pnpm audit --prod sin avisos conocidos en esta revision.
+- Prueba real ClamAV: archivo limpio aceptado y EICAR inofensivo rechazado,
+  ejecutando el cliente con el usuario y grupo del portal.
+- 16 documentos existentes examinados sin detecciones.
+- Integracion PostgreSQL aislada: invitaciones, roles, archivos y datos entre
+  productores, gerenciadora sin permiso, CSRF, SQL/XSS basicos, sesiones,
+  limites de login, backups, restauracion completa y rollback ante fallo.
+  No se restauro sobre la base productiva ni se enviaron correos en esas pruebas.
+- HTTPS externo valido: login/health responden; admin/Sistemas/notificaciones
+  anonimos redirigen a login; .env, .git y storage responden 404 sin secretos.
+- Puertos app 3000 y PostgreSQL 5432 no accesibles desde la ubicacion de prueba.
+- El sondeo TCP externo del 25 fue inconcluso: acepta conexion sin banner SMTP,
+  aunque el VPS no tiene listener y UFW no lo permite. No se afirma cierre
+  extremo a extremo; verificar desde otra red/proveedor si se requiere certificacion.
+
+RIESGOS Y PENDIENTES
+1. Por pedido expreso del propietario, SSH mantiene contrasena y acceso root,
+   con su configuracion actual (22 y 5818); Fail2ban sigue activo. No fue cerrado.
+   Antes de operar: rotar la clave compartida y luego pasar a clave SSH/VPN
+   o IPs administrativas, comprobando primero la consola de recuperacion.
+2. La clave ZIP elegida por el propietario es mas debil que la clave aleatoria
+   anterior y fue compartida por chat. El ZIP de recuperacion incluye secretos.
+   Recomendacion: frase unica y larga, guardada en gestor, separada del respaldo.
+3. Aun no hay segundo factor en el portal. Priorizar MFA para Sistemas y admins;
+   proteger tambien Workspace, Drive, GitHub y Donweb con MFA y cuentas individuales.
+4. No hay proteccion DDoS de proveedor/CDN ni WAF gestionado. Los limites locales
+   no evitan saturacion del enlace ni una denegacion distribuida.
+5. Falta una auditoria independiente y monitoreo externo continuo de disponibilidad,
+   vencimiento TLS, disco y fallos de ClamAV/parches. Los avisos de backups no
+   sustituyen un sistema de monitoreo de seguridad.
+6. El procedimiento legacy provision-vps.sh usa supuestos HTTP anteriores y no
+   debe ejecutarse sobre produccion. Revisar el instalador antes de otra instalacion.
+
+OPERACION
+- Rollback inicial de configuracion, solo root:
+  /root/portal-security-1792705889818
+- Drop-in de aislamiento: deploy/portalpromo-security.conf.
+- Nginx requiere tanto nginx-definitivo.conf como nginx-portal-limits.conf;
+  siempre ejecutar nginx -t antes de recargar.
+- UPLOAD_ANTIVIRUS=true en /etc/portalpromo.env del VPS. No ponerlo en false
+  como solucion a una falla del antivirus: corregir el servicio y sus firmas.
+- Para replicar: instalar clamav-daemon/clamav-freshclam/clamdscan, configurar
+  socket Unix 660 grupo clamav y agregar el grupo suplementario al servicio.
+- scripts/harden-primary-vps.js esta restringido a este VPS, no es instalador
+  generico. Requiere revision previa; guarda configuracion antes de modificarla.
+- Las claves y credenciales nunca forman parte de este informe ni del repositorio.
+
+REFERENCIAS TECNICAS
+https://docs.clamav.net/manual/Usage/Scanning.html
+https://ubuntu.com/server/docs/how-to/software/automatic-updates/

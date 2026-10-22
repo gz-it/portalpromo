@@ -20,6 +20,11 @@ async function attachUser(req, res, next) {
     [req.session.userId],
   );
   req.user = result.rows[0] || null;
+  if (req.user && req.user.status !== 'ACTIVO') {
+    req.user = null;
+    delete req.session.userId;
+    delete req.session.lastActiveAt;
+  }
   next();
 }
 

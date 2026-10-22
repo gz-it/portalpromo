@@ -63,7 +63,7 @@ function validateCompatibility(staging) {
 }
 
 async function restoreFullBackup(file, password, actor = {}) {
-  if (typeof password !== 'string' || password.length < 24 || password.length > 1024) throw new Error('Ingrese la clave del respaldo de recuperacion');
+  if (typeof password !== 'string' || password.length < 12 || password.length > 1024) throw new Error('Ingrese la clave del respaldo de recuperacion');
   const job = fs.mkdtempSync(path.join(directory, 'trabajo-'));
   const staging = path.join(job, 'validado');
   fs.mkdirSync(staging, { mode: 0o700 });

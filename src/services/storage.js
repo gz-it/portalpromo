@@ -6,6 +6,7 @@ const mime = require('mime-types');
 const sanitize = require('sanitize-filename');
 const config = require('../config');
 const db = require('../db');
+const { scannedUpload } = require('./antivirus');
 
 fs.mkdirSync(config.storagePath, { recursive: true });
 
@@ -31,7 +32,7 @@ const storage = multer.diskStorage({
   },
 });
 
-const upload = multer({
+const multipart = multer({
   storage,
   limits: { fileSize: config.maxUploadSizeMb * 1024 * 1024, files: 1, fields: 500, parts: 501, fieldSize: 64 * 1024 },
   fileFilter(req, file, cb) {
@@ -39,6 +40,8 @@ const upload = multer({
     cb(null, true);
   },
 });
+
+const upload = { single: field => scannedUpload(multipart.single(field), config.uploadAntivirus) };
 
 async function saveAttachment({ file, eventId, moduleKey, userId }) {
   const handle = await fs.promises.open(file.path, 'r');
