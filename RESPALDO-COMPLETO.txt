@@ -1,8 +1,8 @@
 DOS RESPALDOS DIFERENTES - 22/10/2026
 
-Estado: generacion manual y prueba de recuperacion implementadas.
-Pendiente: autorizacion permanente de Drive de productores, subida automatica,
-retencion remota y correo con enlace privado. No estan activados todavia.
+Estado: generacion y restauracion web implementadas. Drive autorizado, copias
+automaticas lunes y jueves 03:00 Argentina, conservacion 30 dias y avisos por mail.
+Ver DRIVE-BACKUPS.txt. El correo de Drive contiene enlace privado, no los dos ZIP adjuntos.
 El respaldo automatico de base de datos anterior continua funcionando.
 
 1. ARCHIVO -RECUPERACION.ZIP: RECUPERACION DEL SISTEMA
@@ -73,5 +73,5 @@ Las copias previas quedan privadas en backups/restauraciones/trabajo-*/copia-pre
 Los backups .ppr anteriores siguen siendo restaurables mediante RECOVERY.md (procedimiento tecnico).
 
 La configuracion completa contiene secretos y debe ser accesible solo a Sistemas.
-La cuenta conectada al Drive del asistente es gestion@gzit.com.ar; no se uso
-como sustituto de productores@estadiohuracan.com ni se publicaron archivos.
+La conexion del VPS es OAuth propio de productores@estadiohuracan.com.
+El conector del asistente no se usa como sustituto de esta autorizacion.

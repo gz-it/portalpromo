@@ -1,0 +1,41 @@
+RESPALDOS COMPLETOS EN DRIVE
+
+Cuenta propietaria: productores@estadiohuracan.com.
+Proyecto OAuth dedicado: Portal Productores - Respaldos.
+Permiso solicitado: drive.file (solo archivos creados/usados por la app).
+OAuth interno de la cuenta empresarial, sin modo de prueba de 7 dias.
+Carpeta privada con lectores booking@estadiohuracan.com y gestion@gzit.com.ar.
+No existe permiso publico, de grupo ni de dominio.
+
+Programacion: lunes y jueves 03:00 America/Argentina/Buenos_Aires.
+Servicio: portalpromo-drive-backup.service. Temporizador: portalpromo-drive-backup.timer.
+La clave OAuth y refresh token se guardan en /etc/portalpromo-drive.json, root 600.
+No se copian a Git ni al ZIP de consulta. No imprimir su contenido.
+La clave ZIP se guarda aparte en /etc/portalpromo-backup-zip.key y fuera del VPS.
+
+Cada ejecucion genera dos ZIP de una misma captura:
+- ZIP de consulta: CSV y documentos ordenados por evento/modulo.
+- ZIP -recuperacion.zip: base nativa, documentos, configuracion y codigo de referencia.
+El segundo se restaura desde Sistemas en una instalacion compatible.
+
+Se prueba la recuperacion en una base aislada, se verifica la integridad de los ZIP,
+y se suben ambos a una carpeta fechada. Se comprueba tamano/MD5 y luego se descargan
+de Drive para comparar SHA-256. Solo entonces la carpeta se marca completa.
+
+Rotacion: ultimos 30 dias. Unicamente se retiran carpetas completadas por esta app,
+dentro de la carpeta raiz identificada en la configuracion, despues de otra copia correcta.
+Las carpetas vencidas se envian a la papelera recuperable; no se eliminan permanentemente.
+La papelera de Google puede retenerlas y ocupar espacio adicional hasta su vaciado automatico.
+Los respaldos locales de este trabajo se guardan en /var/backups/portalpromo-drive
+(solo root) y tambien se conservan 30 dias. El usuario web no puede reemplazar el
+directorio de salida ni el archivo de bloqueo de este trabajo privilegiado.
+No se aplican reglas de limpieza al resto de Drive ni a los backups previos/manuales.
+
+Booking y Gestion reciben correo de exito/error. Las claves nunca se adjuntan al correo.
+El backup de base .dump por correo anterior sigue independiente, sin cambios.
+Si falla una subida no se rotan copias anteriores; puede quedar una carpeta incompleta,
+que no cuenta como respaldo verificado y requiere revision por Sistemas.
+El panel de Sistemas muestra el estado, ultima copia correcta y enlace privado.
+
+Para otra instalacion, autorizar nuevamente su cuenta de Drive. La configuracion OAuth
+del VPS no se restaura automaticamente desde el ZIP. No reutilizar cuentas de otro cliente.

@@ -1,0 +1,17 @@
+[Unit]
+Description=Portal - dos respaldos completos verificados en Drive
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/portalpromo
+EnvironmentFile=/etc/portalpromo.env
+ExecStart=/usr/bin/flock -n /var/backups/portalpromo-drive/.job.lock /usr/bin/node scripts/drive-backup.js
+TimeoutStartSec=30min
+UMask=0077
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadOnlyPaths=/opt/portalpromo
