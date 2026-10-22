@@ -1,0 +1,48 @@
+RESPALDO COMPLETO ZIP - 22/10/2026
+
+Estado: generacion manual y prueba de recuperacion implementadas.
+Pendiente: autorizacion permanente de Drive de productores, subida automatica,
+retencion remota y correo con enlace privado. No estan activados todavia.
+El respaldo automatico de base de datos anterior continua funcionando.
+
+Contenido del ZIP (AES-256, clave separada):
+- Datos/*.csv: informacion de negocio consultable con Excel. Sin claves ni tokens.
+- Documentos/: archivos por evento y modulo.
+- recuperacion-completa.ppr: base, codigo, configuracion y archivos.
+- Verificacion.json: cantidades y resultado de recuperacion aislada.
+- LEER-PRIMERO.txt: orientacion de consulta y restauracion.
+
+Instalacion: pnpm install --frozen-lockfile (incluye archiver-zip-encrypted).
+Generacion manual como root, sin poner claves en los argumentos:
+
+node -r dotenv/config scripts/complete-backup.js /ruta/nuevo.zip /ruta/clave-ppr /ruta/clave-zip dotenv_config_path=/etc/portalpromo.env
+
+La herramienta crea la clave ZIP si no existe (64 caracteres aleatorios).
+Conservar ambas claves fuera del VPS, separadas del ZIP y fuera de Git.
+Abrir con 7-Zip u otro lector ZIP compatible con AES-256.
+Los nombres de archivos del ZIP no estan cifrados: mantenerlo privado en Drive.
+
+La prueba crea una base portal_drill_ con sufijo aleatorio, restaura el PPR,
+verifica adjuntos, arranca el codigo recuperado en loopback y elimina la base
+y carpetas temporales. No modifica la base ni reinicia el servicio en uso.
+La prueba usa las dependencias instaladas del VPS: no sustituye una prueba
+de instalacion de dependencias en otro VPS completamente vacio.
+Si los adjuntos cambian durante la captura, puede fallar y debe repetirse.
+
+Verificacion independiente del ZIP:
+Python en entorno aislado con pyzipper==0.3.6:
+python scripts/verify-complete-zip.py /ruta/respaldo.zip /ruta/clave-zip
+Comprueba lectura e integridad de todos los archivos y rechazo de clave erronea.
+
+Para recuperar ante un desastre:
+1. Preparar VPS Ubuntu vacio con scripts/prepare-vps.sh y dependencias PostgreSQL.
+2. Abrir ZIP, conservar PPR y obtener la clave PPR guardada aparte.
+3. Crear base vacia y carpetas nuevas. No restaurar sobre produccion.
+4. Definir RESTORE_DATABASE_URL con la base nueva y ejecutar:
+   node scripts/recovery-backup.js restore --input recuperacion-completa.ppr --key /ruta/clave-ppr --uploads /ruta/nuevos-uploads --restored-env /ruta/nuevo.env --code /ruta/nuevo-codigo --confirm RESTAURAR
+5. Instalar dependencias del codigo, adaptar rutas/configuracion, HTTPS y servicio.
+6. Verificar acceso, eventos, archivos y correo antes de cambiar DNS.
+
+La configuracion completa contiene secretos y debe ser accesible solo a Sistemas.
+La cuenta conectada al Drive del asistente es gestion@gzit.com.ar; no se uso
+como sustituto de productores@estadiohuracan.com ni se publicaron archivos.
