@@ -1,6 +1,8 @@
 PORTAL DE PRODUCTORES - REVISION Y REFUERZO DE SEGURIDAD
 Fecha: 22/10/2026. Alcance: portalproductores.estadiohuracan.com,
 VPS definitivo 149.50.151.139 y codigo del portal. No se modifico CCTV.
+Ampliacion posterior: ALERTAS-SEGURIDAD.txt. Avisos activos para Gestion;
+el propietario decidio mantener el acceso sin segundo factor.
 
 RESULTADO
 Se corrigieron puntos concretos y se verifico el funcionamiento. No es una
@@ -59,13 +61,14 @@ RIESGOS Y PENDIENTES
 2. La clave ZIP elegida por el propietario es mas debil que la clave aleatoria
    anterior y fue compartida por chat. El ZIP de recuperacion incluye secretos.
    Recomendacion: frase unica y larga, guardada en gestor, separada del respaldo.
-3. Aun no hay segundo factor en el portal. Priorizar MFA para Sistemas y admins;
+3. Aun no hay segundo factor en el portal por decision del propietario;
+   se mantiene mail y contrasena, con alertas de acceso y cambios sensibles.
    proteger tambien Workspace, Drive, GitHub y Donweb con MFA y cuentas individuales.
 4. No hay proteccion DDoS de proveedor/CDN ni WAF gestionado. Los limites locales
    no evitan saturacion del enlace ni una denegacion distribuida.
-5. Falta una auditoria independiente y monitoreo externo continuo de disponibilidad,
-   vencimiento TLS, disco y fallos de ClamAV/parches. Los avisos de backups no
-   sustituyen un sistema de monitoreo de seguridad.
+5. Falta una auditoria independiente y monitoreo EXTERNO de disponibilidad.
+   Se agregaron controles locales de servicios, TLS, disco, firmas, firewall,
+   SSH y Fail2ban. No pueden avisar durante un apagado total del VPS.
 6. El procedimiento legacy provision-vps.sh usa supuestos HTTP anteriores y no
    debe ejecutarse sobre produccion. Revisar el instalador antes de otra instalacion.
 

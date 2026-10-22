@@ -5,7 +5,7 @@ const { spawnSync } = require('node:child_process');
 const archiver = require('archiver');
 
 const root = path.resolve(__dirname, '..');
-const scripts = new Set(['migrate.js', 'seed-admin.js', 'backup.js', 'update.js', 'prepare-vps.sh', 'recovery-backup.js', 'capture-recovery.sh', 'complete-backup.js', 'verify-complete-zip.py', 'unpack-recovery-zip.py', 'package-clean.js', 'review-sandbox.js']);
+const scripts = new Set(['migrate.js', 'seed-admin.js', 'backup.js', 'update.js', 'prepare-vps.sh', 'recovery-backup.js', 'capture-recovery.sh', 'complete-backup.js', 'verify-complete-zip.py', 'unpack-recovery-zip.py', 'package-clean.js', 'review-sandbox.js', 'security-monitor.js']);
 const documents = new Set(['README.md', 'RECOVERY.md', 'SECURITY.txt', 'SEGURIDAD-2026-10-22.txt', 'VERSION', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.gitignore', 'INSTALACION-LIMPIA.txt', 'RESPALDO-COMPLETO.txt', 'DRIVE-BACKUPS.txt']);
 
 function include(name) {
@@ -15,6 +15,9 @@ function include(name) {
     || name === 'deploy/portalpromo-security.conf'
     || name === 'deploy/52portal-security-upgrades'
     || name === 'deploy/nginx-portal-limits.conf'
+    || name === 'deploy/portalpromo-security-monitor.service'
+    || name === 'deploy/portalpromo-security-monitor.timer'
+    || name === 'ALERTAS-SEGURIDAD.txt'
     || name === 'nginx/portal.conf.example'
     || documents.has(name);
 }
@@ -36,6 +39,7 @@ async function main() {
   for (const name of ['seed:demo', 'seed:demo-events', 'smoke:live']) delete pkg.scripts[name];
   contents.set('package.json', Buffer.from(JSON.stringify(pkg, null, 2) + '\n'));
   contents.set('.env.example', Buffer.from(`NODE_ENV=development\nPORT=3000\nAPP_URL=http://localhost:3000\nDATABASE_URL=postgres://USUARIO:CLAVE@127.0.0.1:5432/portal_nuevo\nSESSION_SECRET=REEMPLAZAR_CON_UN_SECRETO_ALEATORIO_LARGO\nSESSION_SECURE=false\nSTORAGE_PATH=./storage/uploads\nBACKUP_PATH=./storage/backups\nMAX_UPLOAD_SIZE_MB=200\nSMTP_HOST=\nSMTP_PORT=465\nSMTP_SECURE=true\nSMTP_USER=\nSMTP_PASSWORD=\nSMTP_FROM=\nINITIAL_ADMIN_EMAIL=\nINITIAL_ADMIN_USERNAME=\nINITIAL_ADMIN_PASSWORD=\nINITIAL_ADMIN_FIRST_NAME=\nINITIAL_ADMIN_LAST_NAME=\nGIT_REPOSITORY=\nGIT_BRANCH=main\nPG_DUMP_BIN=pg_dump\nNPM_BIN=pnpm\n`));
+  contents.set('.env.example', Buffer.concat([contents.get('.env.example'), Buffer.from('UPLOAD_ANTIVIRUS=false\nSECURITY_ALERT_EMAIL=\n')]));
   const manifest = { type: 'codigo-limpio-sin-datos', createdAt: new Date().toISOString(), revision, version: contents.get('VERSION').toString().trim(), hashes: {} };
   for (const [name, buffer] of contents) manifest.hashes[name] = crypto.createHash('sha256').update(buffer).digest('hex');
   contents.set('MANIFIESTO.json', Buffer.from(JSON.stringify(manifest, null, 2)));

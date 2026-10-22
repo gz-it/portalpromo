@@ -28,6 +28,8 @@ function main() {
   // Remove only the blanket bypass; existing HTTP(S) and SSH allow rules remain.
   const rules = run('/usr/sbin/ufw', ['status']);
   if (/Anywhere\s+ALLOW(?: IN)?\s+200\.58\.112\.191/.test(rules)) run('/usr/sbin/ufw', ['--force', 'delete', 'allow', 'from', '200.58.112.191']);
+  const input = run('/usr/sbin/iptables', ['-S', 'INPUT']);
+  if (input.includes('-A INPUT -s 200.58.112.191/32 -j ACCEPT')) run('/usr/sbin/iptables', ['-D', 'INPUT', '-s', '200.58.112.191/32', '-j', 'ACCEPT']);
   run('/usr/bin/systemctl', ['enable', '--now', 'unattended-upgrades', 'clamav-freshclam']);
   run('/usr/bin/systemctl', ['daemon-reload']);
   run('/usr/bin/systemctl', ['restart', 'clamav-daemon']);

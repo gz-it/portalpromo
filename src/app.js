@@ -27,6 +27,7 @@ const {
 } = require('./middleware/auth');
 const { csrf } = require('./middleware/csrf');
 const { audit } = require('./utils/audit');
+const { safelyQueue, recordAdminLogin } = require('./services/security-alerts');
 const { sendMail, verifyMail, getMailSettings, saveMailSettings } = require('./utils/email');
 const { sendVerification, confirmEmail, notifyRegistrationAdmins } = require('./services/registration');
 const { sendInvitation, acceptInvitation } = require('./services/invitations');
@@ -190,7 +191,9 @@ routes.post('/resend-verification', rateLimit({ windowMs: 15 * 60 * 1000, limit:
   res.redirect('/login');
 });
 
-routes.post('/login', rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false }), async (req, res) => {
+routes.post('/login', rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false,
+  handler: async (req, res) => { await safelyQueue('LOGIN_LIMIT', { ip: req.ip }); res.status(429).send('Demasiados intentos. Intente mas tarde.'); },
+}), async (req, res) => {
   if (typeof req.body.login !== 'string' || req.body.login.length > 254 || typeof req.body.password !== 'string' || Buffer.byteLength(req.body.password) > 72) return res.status(400).send('Credenciales invalidas');
   const result = await db.query(
     `select u.*, array_remove(array_agg(r.name), null) roles from users u
@@ -200,6 +203,7 @@ routes.post('/login', rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardH
   );
   const user = result.rows[0];
   if (!user || !(await verifyPassword(req.body.password || '', user.password_hash))) {
+    await safelyQueue('LOGIN_FAILED', { ip: req.ip });
     flash(req, 'error', 'Credenciales invalidas');
     return res.redirect('/login');
   }
@@ -218,6 +222,7 @@ routes.post('/login', rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardH
   await new Promise((resolve, reject) => req.session.regenerate(error => error ? reject(error) : resolve()));
   req.session.userId = user.id;
   await audit(user.id, 'login', 'users', user.id);
+  await recordAdminLogin(user, req.ip);
   res.redirect('/dashboard');
 });
 
@@ -252,9 +257,10 @@ routes.post('/reset/:token', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }),
     await client.query('update users set password_hash=$1, updated_at=now() where id=$2', [passwordHash, row.user_id]);
     await client.query('update password_reset_tokens set used_at=now() where user_id=$1 and used_at is null', [row.user_id]);
     await client.query('delete from session where sess->>\'userId\'=$1', [row.user_id]);
-    return true;
+    return row.user_id;
   });
   if (!changed) { flash(req, 'error', 'Token invalido o vencido'); return res.redirect('/forgot'); }
+  await safelyQueue('PASSWORD_RESET', { targetId: changed, ip: req.ip });
   flash(req, 'ok', 'Contrasena actualizada.');
   res.redirect('/login');
 });
@@ -727,7 +733,10 @@ routes.get('/admin/users/:id/delete', requireLogin, requireRole(ROLES.ADMIN), as
 });
 routes.post('/admin/users/:id/delete', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
   if (req.body.confirmation !== 'ELIMINAR') return res.status(400).send('Escriba ELIMINAR para confirmar.');
-  try { await removeUser(req.user.id, req.params.id); }
+  try {
+    await removeUser(req.user.id, req.params.id);
+    await safelyQueue('ROLE_CHANGED', { actorId: req.user.id, targetId: req.params.id });
+  }
   catch (error) { if ([400,404].includes(error.status)) return res.status(error.status).send(error.message); throw error; }
   flash(req, 'ok', 'Usuario eliminado. Se conservaron sus eventos y documentos.');
   res.redirect('/admin/users');

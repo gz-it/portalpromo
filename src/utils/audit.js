@@ -6,6 +6,7 @@ async function audit(userId, action, entityType, entityId, detail = {}) {
      values ($1, $2, $3, $4, $5)`,
     [userId || null, action, entityType || null, entityId || null, detail],
   );
+  await require('../services/security-alerts').alertAudit(userId, action, entityType, entityId);
 }
 
 module.exports = { audit };

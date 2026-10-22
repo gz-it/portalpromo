@@ -107,9 +107,11 @@ async function restoreFullBackup(file, password, actor = {}) {
       if (mail) await client.query("update system_settings set value=$1 where key='smtp_password_encrypted'", [rewrapMailSecret(mail, oldEnv.SESSION_SECRET)]);
       await client.query('delete from session');
       await client.query("update system_settings set value='false' where key='backup_enabled'");
+      await client.query("delete from system_settings where key='security_alert_outbox'");
       await client.query("insert into audit_logs(action,entity_type,detail) values('restaurar_sistema','backups',$1)", [{ requested_by_email:actor.email || null, snapshot_at:manifest.createdAt }]);
     });
     fs.writeFileSync(path.join(previous, 'LEER.txt'), 'Copia previa a restauracion: database.dump y uploads. Mantener privada. No se elimina automaticamente.\n', { mode: 0o600 });
+    await require('./security-alerts').safelyQueue('RESTORE', { actorId: actor.id });
     return { version: manifest.version, rollback: previous };
   } catch (error) {
     try {

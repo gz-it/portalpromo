@@ -1,0 +1,72 @@
+ALERTAS DE SEGURIDAD - 22/10/2026
+
+DESTINATARIO
+Solo gestion@gzit.com.ar, configurado mediante SECURITY_ALERT_EMAIL en el
+entorno privado del VPS. No se cambiaron los destinatarios de los backups.
+Se mantiene el ingreso con mail y contrasena. No se implemento ni activo MFA
+por decision del propietario. SSH sigue con su acceso actual.
+
+AVISOS DEL PORTAL
+- Diez intentos fallidos en una ventana de 15 minutos, o limite de login alcanzado.
+  El limite de login sigue siendo de 20 solicitudes por IP cada 15 minutos.
+- Ingreso ADMINISTRADOR/SISTEMAS con IP nueva para esa cuenta. Se recuerdan las
+  ultimas diez IP por cuenta: el primer ingreso luego de activar esto tambien avisa.
+  Una IP nueva puede ser un cambio legitimo de red, no prueba una intrusion.
+- Cambios de roles/estado/alta/baja de usuarios y de cuenta administrativa.
+- Recuperacion efectiva de contrasena; cambios SMTP o de respaldos; restauraciones.
+- Archivo detectado por ClamAV o imposibilidad de verificar una carga.
+
+AVISOS DEL SERVIDOR
+Timer portalpromo-security-monitor.timer: revision cada cinco minutos.
+Controla doce aspectos: servicio web, Nginx, PostgreSQL, Fail2ban, ClamAV,
+actualizacion de firmas, actualizaciones automaticas, respuesta HTTP local,
+firewall IPv4/IPv6, espacio de disco, vencimiento TLS y antiguedad de firmas.
+Alerta por menos de 15% de disco libre, TLS con menos de 14 dias y firmas
+del antivirus con mas de tres dias sin actualizar.
+Tambien procesa registros de SSH/Fail2ban: origen nuevo, intentos fallidos y bloqueos.
+Los problemas de controles se avisan al cambiar de estado; se avisa la recuperacion.
+En la comprobacion se elimino una segunda excepcion directa de INPUT para
+200.58.112.191 que no figuraba como regla de usuario UFW. No se tocaron puertos
+ni autenticacion SSH. El monitor ahora comprueba tambien este tipo de bypass.
+
+ENTREGA Y AGRUPACION
+- Cola persistente privada en system_settings; no requiere migracion de esquema.
+- La aplicacion intenta entregar cada minuto. El monitor puede entregar aunque
+  el proceso web este caido, si PostgreSQL y SMTP siguen disponibles.
+- Un resumen como maximo cada 15 minutos; distintos tipos se incluyen juntos.
+  Los avisos nuevos pueden esperar el resto de ese intervalo. Los controles del
+  servidor pueden tardar hasta cinco minutos adicionales en detectar un cambio.
+- Correo de texto con hora Argentina, tipo, cantidad, responsables cuando se
+  conocen, hasta diez IP y controles afectados. No incluye claves, tokens,
+  archivos adjuntos, cuerpos de peticiones ni registros completos de SSH.
+- Fallas de SMTP: no se descartan los eventos; reintento con espera de cinco minutos.
+- Lease persistente evita entregas simultaneas. Tras una caida entre aceptacion
+  SMTP y confirmacion en PostgreSQL puede repetirse excepcionalmente un resumen.
+- El monitor conserva transiciones pendientes bajo /var/lib/portalpromo-security,
+  directorio root 700, si no puede escribir en PostgreSQL.
+- La restauracion completa descarta avisos viejos del snapshot y agrega su propio
+  aviso nuevo; no reproduce automaticamente todas las alertas antiguas.
+
+LIMITES IMPORTANTES
+No es un SIEM ni detecta todos los ataques. Una contrasena robada todavia permite
+entrar sin MFA. No se bloquearon paises ni IP nuevas para evitar cortar el uso normal.
+Si el VPS entero esta apagado, sin red o comprometido, este monitor local no puede
+garantizar aviso. Si SMTP o PostgreSQL estan caidos no hay garantia de aviso inmediato;
+la cola se reintenta al recuperar los servicios. Falta monitoreo desde otro proveedor.
+La aceptacion SMTP no confirma llegada a la bandeja: revisar tambien spam.
+
+VERIFICACION
+- Pruebas unitarias de agrupacion, umbrales, concurrencia, retry, leases,
+  conservacion de eventos nuevos, controles de estado y firewall IPv4/IPv6.
+- Integracion aislada PostgreSQL: destinatario exclusivo, resumen sin secretos
+  y dos emisores concurrentes con una sola entrega (SMTP simulado).
+- Prueba SMTP real aceptada para gestion@gzit.com.ar.
+- Monitor ejecutado desde su unidad systemd: doce controles correctos.
+- HTTPS/login sigue respondiendo 200 y no se agregaron pasos al acceso.
+
+DESPLIEGUE
+La unidad y timer estan en deploy/portalpromo-security-monitor.*. Requieren Node,
+nftables, journalctl, openssl, el entorno privado y el directorio root anterior.
+El nombre del certificado y servicios corresponden a este VPS: adaptar al replicar
+para otro cliente. No ejecutar el monitor con el usuario del proceso web.
+Nunca publicar /etc/portalpromo.env, el estado privado ni las claves en Git.

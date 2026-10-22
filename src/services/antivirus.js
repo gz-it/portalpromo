@@ -21,6 +21,9 @@ function scannedUpload(middleware, enabled, scan = scanFile) {
     };
     finish().then(() => next(), async failure => {
       if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
+      if (['UPLOAD_INFECTED', 'SCAN_UNAVAILABLE'].includes(failure.code)) {
+        await require('./security-alerts').safelyQueue(failure.code, { actorId: req.user?.id, ip: req.ip });
+      }
       next(failure);
     });
   });

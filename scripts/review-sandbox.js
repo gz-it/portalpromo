@@ -35,6 +35,7 @@ async function main() {
     process.env.BACKUP_PATH = path.join(directory, 'backups');
     process.env.SESSION_SECURE = 'false';
     process.env.NODE_ENV = 'test';
+    process.env.SECURITY_ALERT_EMAIL = 'security@example.invalid';
     process.env.SESSION_SECRET = randomUUID();
     process.env.APP_URL = 'http://localhost';
     db = require('../src/db');
@@ -356,6 +357,16 @@ async function main() {
     assert.equal(limited.status, 429);
     assert.equal((await administrator.request('/health')).status, 200);
     console.log('PASS seguridad: CSRF, CSP, limites de login, rotacion de sesion y proteccion de cuenta propia');
+    const alerts = require('../src/services/security-alerts');
+    const previousMails = outbox.filter(item => item[0] === 'security@example.invalid').length;
+    const deliveries = await Promise.all([alerts.flushSecurityAlerts({ force: true }), alerts.flushSecurityAlerts({ force: true })]);
+    assert.equal(deliveries.filter(item => item.sent).length, 1, 'Una sola entrega con dos procesos concurrentes');
+    const securityMails = outbox.filter(item => item[0] === 'security@example.invalid');
+    assert.equal(securityMails.length, previousMails + 1);
+    assert.match(securityMails.at(-1)[1], /seguridad/);
+    assert.match(securityMails.at(-1)[2], /intentos|ingreso/i);
+    assert.equal(securityMails.at(-1)[2].includes(password), false);
+    console.log('PASS alertas: cola persistente, resumen, destinatario exclusivo, sin secretos y sin duplicar envios concurrentes (correo simulado)');
   } finally {
     if (server) await new Promise(resolve => server.close(resolve));
     if (db) await db.pool.end();

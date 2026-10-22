@@ -1,0 +1,17 @@
+[Unit]
+Description=Controles y avisos de seguridad del Portal
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/portalpromo
+EnvironmentFile=/etc/portalpromo.env
+ExecStart=/usr/bin/flock -n /var/lib/portalpromo-security/.lock /usr/bin/node scripts/security-monitor.js
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/portalpromo-security
+TimeoutStartSec=180
