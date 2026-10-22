@@ -1,21 +1,34 @@
-RESPALDO COMPLETO ZIP - 22/10/2026
+DOS RESPALDOS DIFERENTES - 22/10/2026
 
 Estado: generacion manual y prueba de recuperacion implementadas.
 Pendiente: autorizacion permanente de Drive de productores, subida automatica,
 retencion remota y correo con enlace privado. No estan activados todavia.
 El respaldo automatico de base de datos anterior continua funcionando.
 
-Contenido del ZIP (AES-256, clave separada):
+1. ARCHIVO .PPR: RECUPERACION DEL SISTEMA
+Base completa, codigo, configuracion y todos los archivos. Cifrado AES-256-GCM.
+Sirve para restaurar el portal en un VPS nuevo. Usar la clave PPR guardada aparte.
+
+2. ARCHIVO .ZIP: CONSULTA SIN EL PORTAL
+Contenido del ZIP (AES-256, clave diferente guardada aparte):
 - Datos/*.csv: informacion de negocio consultable con Excel. Sin claves ni tokens.
 - Documentos/: archivos por evento y modulo.
-- recuperacion-completa.ppr: base, codigo, configuracion y archivos.
 - Verificacion.json: cantidades y resultado de recuperacion aislada.
 - LEER-PRIMERO.txt: orientacion de consulta y restauracion.
+NO incluye PPR, base tecnica, codigo, credenciales ni configuracion de produccion.
+No requiere instalar el portal para consultar datos y documentos.
+No se afirma compatibilidad con todos los lectores ZIP: requiere soporte AES-256.
+
+Los dos archivos provienen de LA MISMA captura de la base, no de dos capturas.
+Verificacion.json identifica el nombre, fecha de captura y SHA-256 del PPR asociado.
 
 Instalacion: pnpm install --frozen-lockfile (incluye archiver-zip-encrypted).
 Generacion manual como root, sin poner claves en los argumentos:
 
 node -r dotenv/config scripts/complete-backup.js /ruta/nuevo.zip /ruta/clave-ppr /ruta/clave-zip dotenv_config_path=/etc/portalpromo.env
+
+Genera /ruta/nuevo.zip y /ruta/nuevo.ppr. Ninguno debe existir previamente.
+No envia correo ni sube a Drive por si solo.
 
 La herramienta crea la clave ZIP si no existe (64 caracteres aleatorios).
 Conservar ambas claves fuera del VPS, separadas del ZIP y fuera de Git.
@@ -36,7 +49,7 @@ Comprueba lectura e integridad de todos los archivos y rechazo de clave erronea.
 
 Para recuperar ante un desastre:
 1. Preparar VPS Ubuntu vacio con scripts/prepare-vps.sh y dependencias PostgreSQL.
-2. Abrir ZIP, conservar PPR y obtener la clave PPR guardada aparte.
+2. Obtener el archivo PPR separado y su clave guardada aparte. El ZIP no restaura el sistema.
 3. Crear base vacia y carpetas nuevas. No restaurar sobre produccion.
 4. Definir RESTORE_DATABASE_URL con la base nueva y ejecutar:
    node scripts/recovery-backup.js restore --input recuperacion-completa.ppr --key /ruta/clave-ppr --uploads /ruta/nuevos-uploads --restored-env /ruta/nuevo.env --code /ruta/nuevo-codigo --confirm RESTAURAR

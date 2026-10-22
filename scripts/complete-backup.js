@@ -19,6 +19,11 @@ function csv(rows, columns) {
   return '\ufeff' + [columns.map(csvCell).join(';'), ...rows.map(row => columns.map(key => csvCell(row[key])).join(';'))].join('\r\n');
 }
 
+function backupPaths(output) {
+  if (!output?.endsWith('.zip')) throw new Error('Indicar un destino .zip');
+  return { consultation: path.resolve(output), recovery: path.resolve(output.slice(0, -4) + '.ppr') };
+}
+
 async function writeZip(directory, output, password) {
   if (!password || password.length < 24) throw new Error('La clave ZIP debe tener al menos 24 caracteres');
   if (!archiver.isRegisteredFormat('zip-encrypted')) archiver.registerFormat('zip-encrypted', require('archiver-zip-encrypted'));
@@ -46,7 +51,8 @@ async function writeZip(directory, output, password) {
 async function main() {
   if (process.platform !== 'linux' || process.getuid() !== 0) throw new Error('Ejecutar como root en Linux');
   const [output, keyFile, zipKeyFile] = process.argv.slice(2);
-  if (!output?.endsWith('.zip') || !keyFile || !zipKeyFile || fs.existsSync(output)) throw new Error('Uso: complete-backup.js nuevo.zip clave-ppr clave-zip');
+  const destinations = backupPaths(output);
+  if (!keyFile || !zipKeyFile || Object.values(destinations).some(file => fs.existsSync(file))) throw new Error('Uso: complete-backup.js nuevo.zip clave-ppr clave-zip; ambos destinos deben ser nuevos');
   const config = require('../src/config');
   const database = `portal_drill_${crypto.randomBytes(12).toString('hex')}`;
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'portal-complete-'));
@@ -64,7 +70,7 @@ async function main() {
     const staging = path.join(temp, 'snapshot');
     const restored = path.join(temp, 'restauracion');
     for (const dir of [content, staging, restored]) fs.mkdirSync(dir, { mode: 0o700 });
-    const ppr = path.join(content, 'recuperacion-completa.ppr');
+    const ppr = path.join(temp, 'recuperacion-completa.ppr');
     await recovery.create({ directory: staging, output: ppr, envFile: '/etc/portalpromo.env', keyFile });
     const target = new URL(config.databaseUrl);
     const owner = decodeURIComponent(target.username);
@@ -74,7 +80,7 @@ async function main() {
     const uploads = path.join(temp, 'uploads-recuperados');
     const code = path.join(temp, 'codigo-recuperado');
     const env = path.join(temp, 'configuracion-recuperada.env');
-    await recovery.restore({ directory: restored, input: ppr, keyFile, databaseUrl: target.toString(), uploads, restoredEnv: env, code, confirmation: 'RESTAURAR' });
+    const snapshot = await recovery.restore({ directory: restored, input: ppr, keyFile, databaseUrl: target.toString(), uploads, restoredEnv: env, code, confirmation: 'RESTAURAR' });
     pool = new Pool({ connectionString: target.toString() });
     const counts = {};
     const data = path.join(content, 'Datos');
@@ -107,11 +113,21 @@ async function main() {
     const check = `const app=require('./src/app');const db=require('./src/db');const s=app.listen(0,'127.0.0.1',async()=>{try{const r=await fetch('http://127.0.0.1:'+s.address().port+'/login');if(r.status!==200)throw Error('login');console.log('RESTORED_APP_OK');}catch(e){process.exitCode=1;}finally{s.close();await db.pool.end();}});`;
     const result = command(process.execPath, ['-e', check], { cwd: code, env: { ...process.env, DATABASE_URL: target.toString(), STORAGE_PATH: uploads, BACKUP_PATH: path.join(temp, 'backups'), SESSION_SECURE: 'false', APP_URL: 'http://127.0.0.1' } });
     if (!result.includes('RESTORED_APP_OK')) throw new Error('No inicio el portal recuperado');
-    const report = { createdAt: new Date().toISOString(), restoredDatabaseVerified: true, restoredAppVerified: true, attachmentsVerified: verified, counts };
+    const report = { format: 'consulta-v1', snapshotAt: snapshot.createdAt, recoveryFilename: path.basename(destinations.recovery), recoverySha256: crypto.createHash('sha256').update(fs.readFileSync(ppr)).digest('hex'), createdAt: new Date().toISOString(), restoredDatabaseVerified: true, restoredAppVerified: true, attachmentsVerified: verified, counts };
     fs.writeFileSync(path.join(content, 'Verificacion.json'), JSON.stringify(report, null, 2));
-    fs.writeFileSync(path.join(content, 'LEER-PRIMERO.txt'), 'RESPALDO COMPLETO DEL PORTAL\n\nDatos: archivos CSV para consultar con Excel.\nDocumentos: archivos ordenados por evento y modulo.\nrecuperacion-completa.ppr: base completa, codigo, configuracion y archivos para restaurar en un VPS vacio.\n\nAbra este ZIP AES-256 con 7-Zip o una herramienta compatible.\nLa clave del ZIP y la clave de recuperacion PPR se guardan por separado.\nPara restaurar: utilice scripts/recovery-backup.js y scripts/prepare-vps.sh del repositorio. Nunca restaure sobre la base en uso.\nLa configuracion restaurada contiene credenciales: solo personal autorizado debe acceder.\nVerificacion.json informa la prueba de restauracion realizada.\n');
-    await writeZip(content, output, fs.readFileSync(zipKeyFile, 'utf8').trim());
-    console.log(JSON.stringify({ ok: true, output, bytes: fs.statSync(output).size, ...report }));
+    fs.writeFileSync(path.join(content, 'LEER-PRIMERO.txt'), 'COPIA DE CONSULTA DEL PORTAL\n\nDatos: archivos CSV para consultar con Excel o LibreOffice.\nDocumentos: archivos originales ordenados por evento y modulo.\n\nEste ZIP NO instala ni restaura el portal. No contiene codigo, credenciales, sesiones ni base tecnica.\nPara recuperar el sistema en otro VPS utilice el archivo .ppr que se genera por separado, su clave y la guia RECOVERY.md.\nAmbas copias corresponden a la misma captura de la base de datos.\n\nAbra este ZIP AES-256 con 7-Zip o una herramienta compatible; no requiere instalar el portal.\nLa clave del ZIP y la clave PPR se guardan por separado.\nVerificacion.json identifica el respaldo de recuperacion asociado y las comprobaciones realizadas.\n');
+    const zip = path.join(temp, 'consulta.zip');
+    await writeZip(content, zip, fs.readFileSync(zipKeyFile, 'utf8').trim());
+    let publishedRecovery = false;
+    try {
+      fs.copyFileSync(ppr, destinations.recovery, fs.constants.COPYFILE_EXCL);
+      publishedRecovery = true;
+      fs.copyFileSync(zip, destinations.consultation, fs.constants.COPYFILE_EXCL);
+    } catch (error) {
+      if (publishedRecovery) fs.unlinkSync(destinations.recovery);
+      throw error;
+    }
+    console.log(JSON.stringify({ ok: true, output: destinations.consultation, recoveryOutput: destinations.recovery, bytes: fs.statSync(destinations.consultation).size, recoveryBytes: fs.statSync(destinations.recovery).size, ...report }));
   } finally {
     if (pool) await pool.end();
     if (created) command('sudo', ['-u', 'postgres', 'dropdb', '--force', database]);
@@ -120,4 +136,4 @@ async function main() {
 }
 
 if (require.main === module) main().catch(error => { console.error(error.message); process.exitCode = 1; });
-module.exports = { csvCell, csv, writeZip };
+module.exports = { csvCell, csv, writeZip, backupPaths };

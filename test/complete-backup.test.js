@@ -3,7 +3,15 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { csvCell, csv, writeZip } = require('../scripts/complete-backup');
+const { csvCell, csv, writeZip, backupPaths } = require('../scripts/complete-backup');
+
+test('recovery and consultation use separate sibling files', () => {
+  const files = backupPaths(path.join(os.tmpdir(), 'portal-fecha.zip'));
+  assert.equal(files.consultation, path.join(os.tmpdir(), 'portal-fecha.zip'));
+  assert.equal(files.recovery, path.join(os.tmpdir(), 'portal-fecha.ppr'));
+  assert.notEqual(files.consultation, files.recovery);
+  assert.throws(() => backupPaths('archivo.dump'));
+});
 
 test('consultable exports escape CSV and neutralize spreadsheet formulas', () => {
   assert.equal(csvCell('=HYPERLINK("bad")'), '"\'=HYPERLINK(""bad"")"');

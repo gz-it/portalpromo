@@ -16,8 +16,17 @@ def main():
             raise ValueError("El ZIP no supera la verificacion")
         report = json.loads(backup.read("Verificacion.json"))
         assert report["restoredDatabaseVerified"] and report["restoredAppVerified"]
-        assert backup.read("recuperacion-completa.ppr")[:4] == b"PPR1"
         names = backup.namelist()
+        if report.get("format") == "consulta-v1":
+            assert not any(name.endswith((".ppr", ".dump", ".env", ".key")) or name.startswith("code/") for name in names)
+            recovery = archive.with_name(report["recoveryFilename"])
+            with recovery.open("rb") as source:
+                assert source.read(4) == b"PPR1"
+                source.seek(0)
+                assert hashlib.file_digest(source, "sha256").hexdigest() == report["recoverySha256"]
+            assert report["snapshotAt"]
+        else:
+            assert backup.read("recuperacion-completa.ppr")[:4] == b"PPR1"
         assert "Datos/events.csv" in names
         assert "Datos/users.csv" in names
         assert not any("password_reset_tokens.csv" in name for name in names)
@@ -31,7 +40,8 @@ def main():
             pass
         else:
             raise ValueError("El ZIP acepto una clave incorrecta")
-    digest = hashlib.file_digest(archive.open("rb"), "sha256").hexdigest()
+    with archive.open("rb") as source:
+        digest = hashlib.file_digest(source, "sha256").hexdigest()
     print(json.dumps({"zipVerified": True, "wrongPasswordRejected": True, "documents": len(documents), "sha256": digest}))
 
 
