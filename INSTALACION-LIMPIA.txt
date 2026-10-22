@@ -1,0 +1,47 @@
+PORTAL DE PRODUCTORES - COPIA LIMPIA
+
+Esta copia conserva codigo, estructura de base de datos y diseno actual.
+No contiene usuarios, eventos, archivos subidos, correos configurados,
+contrasenas, claves de recuperacion ni datos de produccion.
+No es el backup de datos: ese se guarda por separado como portal-completo-*.zip.
+No incluye dependencias ni herramientas del sistema operativo: requieren Internet.
+
+CONSULTA Y CONSERVACION
+Abrir el ZIP en Windows y consultar INSTALACION-LIMPIA.txt y MANIFIESTO.json.
+El manifiesto identifica la revision y el SHA-256 de cada archivo incluido.
+El archivo .sha256 que acompana al ZIP permite verificar la copia completa.
+No ejecutar scripts de instalacion sobre el servidor que ya esta funcionando.
+
+INSTALACION NUEVA (PERSONAL TECNICO)
+1. Utilizar un VPS Ubuntu 24.04 vacio. Copiar y extraer Portal-limpio en /opt/portalpromo.
+2. Revisar scripts/prepare-vps.sh y ejecutarlo como root para preparar herramientas,
+   usuario del servicio y directorios. Este paso NO instala todo el portal ni HTTPS.
+   Verificar el puerto SSH real antes de activar reglas de firewall.
+3. Instalar pnpm compatible con pnpm-lock.yaml. Ejecutar:
+   pnpm install --frozen-lockfile
+4. Crear un usuario PostgreSQL propio y una base VACIA cuyo propietario sea ese usuario.
+   Usar una clave nueva. No reutilizar credenciales de otro cliente.
+5. Copiar .env.example a /etc/portalpromo.env, restringir permisos a root (600),
+   y completar DATABASE_URL, SESSION_SECRET aleatorio, APP_URL y administrador inicial.
+   En produccion usar NODE_ENV=production, SESSION_SECURE=true y HTTPS.
+   Definir STORAGE_PATH=/var/lib/portalpromo/uploads y BACKUP_PATH=/var/lib/portalpromo/backups.
+6. Crear tablas y el primer administrador (no crea datos ni usuarios de prueba):
+   node -r dotenv/config scripts/migrate.js dotenv_config_path=/etc/portalpromo.env
+   node -r dotenv/config scripts/seed-admin.js dotenv_config_path=/etc/portalpromo.env
+7. Quitar INITIAL_ADMIN_PASSWORD de la configuracion despues de crear la cuenta.
+8. Revisar e instalar deploy/portalpromo.service en systemd. El codigo debe ser
+   legible por portalpromo; uploads y backups deben pertenecer a portalpromo y tener permisos 700.
+9. Configurar Nginx con el dominio nuevo usando nginx/portal.conf.example como referencia.
+   Emitir certificados HTTPS, verificar nginx -t y recien entonces habilitar el acceso publico.
+10. Verificar acceso, aislamiento de usuarios, carga/descarga y respaldo antes de usar.
+    Configurar logo/titulo, correo y backups desde las cuentas autorizadas.
+
+No se incluyen scripts particulares de migracion ni modificacion de cuentas reales.
+Los colores y recursos visuales de la version actual se conservan.
+Las actualizaciones Git requieren configurar repositorio y checkout por separado;
+esta copia ZIP es independiente y no incluye el historial .git.
+
+RECUPERAR DATOS EXISTENTES
+Utilizar el backup completo y sus claves, siguiendo RECOVERY.md.
+No sembrar un administrador nuevo ni migrar sobre una base que se va a restaurar.
+La copia limpia por si sola inicia una instalacion vacia: no recupera datos de clientes.
