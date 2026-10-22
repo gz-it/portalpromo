@@ -19,6 +19,9 @@ async function main() {
       [process.env.INITIAL_ADMIN_FIRST_NAME || 'Admin', process.env.INITIAL_ADMIN_LAST_NAME || 'Portal', email, username, passwordHash],
     );
     await pool.query(`insert into user_roles (user_id, role_id) select $1, id from roles where name='ADMINISTRADOR' on conflict do nothing`, [user.rows[0].id]);
+    if (process.env.INITIAL_ADMIN_SYSTEMS === 'true') {
+      await pool.query(`insert into user_roles (user_id, role_id) select $1, id from roles where name='SISTEMAS' on conflict do nothing`, [user.rows[0].id]);
+    }
     await pool.query('commit');
     console.log(`Administrador inicial listo: ${email}`);
   } catch (error) {

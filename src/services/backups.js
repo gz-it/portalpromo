@@ -137,13 +137,14 @@ async function resolveBackup(id) {
 
 async function restoreBackup(row, userId) {
   await createBackup({ source: 'PRE_RESTORE', userId, notify: false });
-  await run(config.pgRestoreBin, ['--clean', '--if-exists', '--no-owner', '--no-privileges', row.target]);
+  await run(config.pgRestoreBin, ['--clean', '--if-exists', '--single-transaction', '--exit-on-error', '--no-owner', '--no-privileges', '--dbname', new URL(config.databaseUrl).pathname.slice(1), row.target]);
 }
 
 let schedulerTimer;
 let schedulerRunning = false;
 
 async function schedulerTick() {
+  if (require('./restore-maintenance').isRestoring()) return;
   if (schedulerRunning) return;
   schedulerRunning = true;
   try {
@@ -174,4 +175,5 @@ module.exports = {
   restoreBackup,
   saveBackupSettings,
   startBackupScheduler,
+  isBackupSchedulerRunning: () => schedulerRunning,
 };

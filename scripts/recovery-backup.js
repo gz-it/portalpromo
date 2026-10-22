@@ -78,7 +78,12 @@ async function create({ directory, output, envFile, keyFile }) {
   fs.copyFileSync(envFile, path.join(directory, 'portal.env'));
   fs.chmodSync(path.join(directory, 'portal.env'), 0o600);
   const version = fs.readFileSync(path.join(config.root, 'VERSION'), 'utf8').trim();
-  const revision = run('git', ['-c', `safe.directory=${config.root}`, '-C', config.root, 'rev-parse', 'HEAD']);
+  let revision;
+  try { revision = run('git', ['-c', `safe.directory=${config.root}`, '-C', config.root, 'rev-parse', 'HEAD']); }
+  catch {
+    const manifestFile = path.join(config.root, 'MANIFIESTO.json');
+    revision = fs.existsSync(manifestFile) ? JSON.parse(fs.readFileSync(manifestFile, 'utf8')).revision : 'sin-git';
+  }
   const code = path.join(directory, 'code');
   fs.mkdirSync(code);
   for (const name of ['src', 'scripts', 'migrations', 'nginx', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'VERSION', 'README.md', '.env.example']) {

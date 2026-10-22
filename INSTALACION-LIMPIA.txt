@@ -25,7 +25,8 @@ INSTALACION NUEVA (PERSONAL TECNICO)
    y completar DATABASE_URL, SESSION_SECRET aleatorio, APP_URL y administrador inicial.
    En produccion usar NODE_ENV=production, SESSION_SECURE=true y HTTPS.
    Definir STORAGE_PATH=/var/lib/portalpromo/uploads y BACKUP_PATH=/var/lib/portalpromo/backups.
-6. Crear tablas y el primer administrador (no crea datos ni usuarios de prueba):
+6. Para habilitar restauracion desde el panel en una instalacion nueva, definir
+   INITIAL_ADMIN_SYSTEMS=true. Crear tablas y el primer administrador (sin datos de prueba):
    node -r dotenv/config scripts/migrate.js dotenv_config_path=/etc/portalpromo.env
    node -r dotenv/config scripts/seed-admin.js dotenv_config_path=/etc/portalpromo.env
 7. Quitar INITIAL_ADMIN_PASSWORD de la configuracion despues de crear la cuenta.
@@ -42,6 +43,13 @@ Las actualizaciones Git requieren configurar repositorio y checkout por separado
 esta copia ZIP es independiente y no incluye el historial .git.
 
 RECUPERAR DATOS EXISTENTES
+Para los ZIP nuevos: entrar a Sistemas > Restaurar sistema y subir el archivo
+terminado en -recuperacion.zip; pedir clave del ZIP, contrasena actual y RESTAURAR.
+Debe existir una instalacion compatible con un usuario de Sistemas para acceder.
+El codigo instalado, SSH, dominio y HTTPS no se restauran desde la pagina.
+Si el administrador inicial no tiene Sistemas, el responsable tecnico debe asignarle
+ese rol durante la instalacion; no existe una restauracion publica sin autenticar.
+Ver RESPALDO-COMPLETO.txt para limites, copia previa, mantenimiento y rollback.
 Utilizar el backup completo y sus claves, siguiendo RECOVERY.md.
 No sembrar un administrador nuevo ni migrar sobre una base que se va a restaurar.
 La copia limpia por si sola inicia una instalacion vacia: no recupera datos de clientes.

@@ -8,7 +8,7 @@ const { csvCell, csv, writeZip, backupPaths } = require('../scripts/complete-bac
 test('recovery and consultation use separate sibling files', () => {
   const files = backupPaths(path.join(os.tmpdir(), 'portal-fecha.zip'));
   assert.equal(files.consultation, path.join(os.tmpdir(), 'portal-fecha.zip'));
-  assert.equal(files.recovery, path.join(os.tmpdir(), 'portal-fecha.ppr'));
+  assert.equal(files.recovery, path.join(os.tmpdir(), 'portal-fecha-recuperacion.zip'));
   assert.notEqual(files.consultation, files.recovery);
   assert.throws(() => backupPaths('archivo.dump'));
 });

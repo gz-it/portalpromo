@@ -5,14 +5,16 @@ set -Eeuo pipefail
 [[ ! -e /etc/portalpromo.env ]] || { echo 'Ya existe una instalacion; no se sobrescribe.' >&2; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl gnupg git nginx postgresql postgresql-contrib ufw fail2ban
+apt-get install -y ca-certificates curl gnupg git nginx postgresql postgresql-contrib ufw fail2ban python3-venv
+python3 -m venv /opt/portal-backup-tools/verify-env
+/opt/portal-backup-tools/verify-env/bin/pip install pyzipper==0.3.6
 if ! command -v node >/dev/null || [[ $(node -p 'Number(process.versions.node.split(".")[0])') -lt 22 ]]; then
   curl -fsSL https://deb.nodesource.com/setup_22.x -o /root/portal-nodesource-setup.sh
   bash /root/portal-nodesource-setup.sh
   apt-get install -y nodejs
 fi
 id portalpromo >/dev/null 2>&1 || useradd --system --home-dir /var/lib/portalpromo --shell /usr/sbin/nologin portalpromo
-install -d -m 750 -o root -g portalpromo /var/lib/portalpromo
+install -d -m 2770 -o root -g portalpromo /var/lib/portalpromo
 install -d -m 700 -o portalpromo -g portalpromo /var/lib/portalpromo/uploads /var/lib/portalpromo/backups
 install -d -m 700 /root/portal-migration
 install -d -m 755 /var/www/letsencrypt

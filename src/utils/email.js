@@ -109,4 +109,4 @@ async function sendMail(to, subject, text, options = {}) {
   return true;
 }
 
-module.exports = { sendMail, enabled, verifyMail, getMailSettings, saveMailSettings };
+module.exports = { sendMail, enabled, verifyMail, getMailSettings, saveMailSettings, encryptSecret, decryptSecret };

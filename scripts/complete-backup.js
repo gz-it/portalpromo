@@ -21,7 +21,7 @@ function csv(rows, columns) {
 
 function backupPaths(output) {
   if (!output?.endsWith('.zip')) throw new Error('Indicar un destino .zip');
-  return { consultation: path.resolve(output), recovery: path.resolve(output.slice(0, -4) + '.ppr') };
+  return { consultation: path.resolve(output), recovery: path.resolve(output.slice(0, -4) + '-recuperacion.zip') };
 }
 
 async function writeZip(directory, output, password) {
@@ -113,14 +113,16 @@ async function main() {
     const check = `const app=require('./src/app');const db=require('./src/db');const s=app.listen(0,'127.0.0.1',async()=>{try{const r=await fetch('http://127.0.0.1:'+s.address().port+'/login');if(r.status!==200)throw Error('login');console.log('RESTORED_APP_OK');}catch(e){process.exitCode=1;}finally{s.close();await db.pool.end();}});`;
     const result = command(process.execPath, ['-e', check], { cwd: code, env: { ...process.env, DATABASE_URL: target.toString(), STORAGE_PATH: uploads, BACKUP_PATH: path.join(temp, 'backups'), SESSION_SECURE: 'false', APP_URL: 'http://127.0.0.1' } });
     if (!result.includes('RESTORED_APP_OK')) throw new Error('No inicio el portal recuperado');
-    const report = { format: 'consulta-v1', snapshotAt: snapshot.createdAt, recoveryFilename: path.basename(destinations.recovery), recoverySha256: crypto.createHash('sha256').update(fs.readFileSync(ppr)).digest('hex'), createdAt: new Date().toISOString(), restoredDatabaseVerified: true, restoredAppVerified: true, attachmentsVerified: verified, counts };
+    const recoveryZip = path.join(temp, 'recuperacion.zip');
+    await writeZip(staging, recoveryZip, fs.readFileSync(zipKeyFile, 'utf8').trim());
+    const report = { format: 'consulta-v1', snapshotAt: snapshot.createdAt, recoveryFilename: path.basename(destinations.recovery), recoverySha256: crypto.createHash('sha256').update(fs.readFileSync(recoveryZip)).digest('hex'), createdAt: new Date().toISOString(), restoredDatabaseVerified: true, restoredAppVerified: true, attachmentsVerified: verified, counts };
     fs.writeFileSync(path.join(content, 'Verificacion.json'), JSON.stringify(report, null, 2));
-    fs.writeFileSync(path.join(content, 'LEER-PRIMERO.txt'), 'COPIA DE CONSULTA DEL PORTAL\n\nDatos: archivos CSV para consultar con Excel o LibreOffice.\nDocumentos: archivos originales ordenados por evento y modulo.\n\nEste ZIP NO instala ni restaura el portal. No contiene codigo, credenciales, sesiones ni base tecnica.\nPara recuperar el sistema en otro VPS utilice el archivo .ppr que se genera por separado, su clave y la guia RECOVERY.md.\nAmbas copias corresponden a la misma captura de la base de datos.\n\nAbra este ZIP AES-256 con 7-Zip o una herramienta compatible; no requiere instalar el portal.\nLa clave del ZIP y la clave PPR se guardan por separado.\nVerificacion.json identifica el respaldo de recuperacion asociado y las comprobaciones realizadas.\n');
+    fs.writeFileSync(path.join(content, 'LEER-PRIMERO.txt'), 'COPIA DE CONSULTA DEL PORTAL\n\nDatos: archivos CSV para consultar con Excel o LibreOffice.\nDocumentos: archivos originales ordenados por evento y modulo.\n\nEste ZIP NO instala ni restaura el portal. No contiene codigo, credenciales, sesiones ni base tecnica.\nPara recuperar el sistema utilice el ZIP terminado en -recuperacion.zip desde Sistemas > Restaurar sistema, en una instalacion compatible.\nAmbas copias corresponden a la misma captura de la base de datos.\n\nAbra este ZIP AES-256 con 7-Zip o una herramienta compatible; no requiere instalar el portal.\nLa clave se guarda por separado de los archivos.\nVerificacion.json identifica el respaldo de recuperacion asociado y las comprobaciones realizadas.\n');
     const zip = path.join(temp, 'consulta.zip');
     await writeZip(content, zip, fs.readFileSync(zipKeyFile, 'utf8').trim());
     let publishedRecovery = false;
     try {
-      fs.copyFileSync(ppr, destinations.recovery, fs.constants.COPYFILE_EXCL);
+      fs.copyFileSync(recoveryZip, destinations.recovery, fs.constants.COPYFILE_EXCL);
       publishedRecovery = true;
       fs.copyFileSync(zip, destinations.consultation, fs.constants.COPYFILE_EXCL);
     } catch (error) {

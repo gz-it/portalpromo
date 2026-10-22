@@ -21,7 +21,7 @@ def main():
             assert not any(name.endswith((".ppr", ".dump", ".env", ".key")) or name.startswith("code/") for name in names)
             recovery = archive.with_name(report["recoveryFilename"])
             with recovery.open("rb") as source:
-                assert source.read(4) == b"PPR1"
+                assert source.read(2) == b"PK" if recovery.suffix == ".zip" else source.read(4) == b"PPR1"
                 source.seek(0)
                 assert hashlib.file_digest(source, "sha256").hexdigest() == report["recoverySha256"]
             assert report["snapshotAt"]

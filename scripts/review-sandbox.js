@@ -57,7 +57,7 @@ async function main() {
         async request(route, options = {}) {
           const headers = new Headers(options.headers);
           if (cookies.size) headers.set('cookie', [...cookies].map(([k,v]) => `${k}=${v}`).join('; '));
-          const response = await fetch(base + route, { ...options, headers, redirect: 'manual', signal: AbortSignal.timeout(10000) });
+          const response = await fetch(base + route, { ...options, headers, redirect: 'manual', signal: AbortSignal.timeout(route.startsWith('/systems/restore') ? 90000 : 10000) });
           for (const value of response.headers.getSetCookie()) {
             const pair = value.split(';')[0], separator = pair.indexOf('=');
             cookies.set(pair.slice(0, separator), pair.slice(separator + 1));
@@ -292,6 +292,59 @@ async function main() {
     assert.equal((await administrator.post(`/admin/users/${producerId}/restore`, {})).status, 302);
     assert.equal((await db.query('select status from users where id=$1', [producerId])).rows[0].status, 'PENDIENTE');
     console.log('PASS eliminacion confirmada conserva datos, cierra sesiones y permite restauracion por invitacion');
+    assert.equal((await administrator.request('/systems/restore')).status, 403);
+    await db.query("insert into user_roles select $1,id from roles where name='SISTEMAS' on conflict do nothing", [admin.id]);
+    assert.equal((await administrator.request('/systems/restore')).status, 200);
+    const fullStaging = path.join(directory, 'web-restore-snapshot');
+    fs.mkdirSync(fullStaging);
+    const fullEnv = path.join(directory, 'web-snapshot.env');
+    fs.writeFileSync(fullEnv, `SESSION_SECRET=${process.env.SESSION_SECRET}\n`);
+    await recovery.create({ directory:fullStaging,output:path.join(directory,'web-snapshot.ppr'),envFile:fullEnv,keyFile });
+    const zipKey = 'isolated-restore-test-password-123456';
+    const zipFile = path.join(directory, 'web-recovery.zip');
+    await require('./complete-backup').writeZip(fullStaging, zipFile, zipKey);
+    const submitRestore = async (zipPassword, currentPassword, archive = zipFile) => {
+      const page = await administrator.request('/systems/restore');
+      const csrf = page.text.match(/\?_csrf=([a-f0-9]+)/)[1];
+      const body = new FormData();
+      body.set('file', new Blob([fs.readFileSync(archive)]), 'portal-recuperacion.zip');
+      body.set('backup_password', zipPassword);
+      body.set('current_password', currentPassword);
+      body.set('confirmation', 'RESTAURAR');
+      return administrator.request(`/systems/restore?_csrf=${csrf}`, { method:'POST',body });
+    };
+    assert.equal((await submitRestore(zipKey, 'incorrect')).status, 403);
+    assert.equal((await submitRestore('incorrect-backup-key-long-enough', password)).status, 400);
+    await db.query("update events set name='Cambio posterior al respaldo' where id=$1", [eventId]);
+    const restoredFile = (await db.query('select storage_key from attachments where id=$1', [adminFile.id])).rows[0];
+    const originalBytes = fs.readFileSync(path.join(process.env.STORAGE_PATH, restoredFile.storage_key));
+    fs.writeFileSync(path.join(process.env.STORAGE_PATH, restoredFile.storage_key), 'changed-after-snapshot');
+    const badStaging = path.join(directory, 'missing-systems-snapshot');
+    fs.cpSync(fullStaging, badStaging, { recursive:true });
+    await db.query("delete from user_roles where role_id=(select id from roles where name='SISTEMAS')");
+    try {
+      command('pg_dump', ['--format=custom','--file',path.join(badStaging,'database.dump')], { env:recovery.pgEnvironment(scratch.toString()) });
+    } finally {
+      await db.query("insert into user_roles select $1,id from roles where name='SISTEMAS' on conflict do nothing", [admin.id]);
+    }
+    const badManifest = JSON.parse(fs.readFileSync(path.join(badStaging,'manifest.json')));
+    badManifest.hashes['database.dump'] = require('crypto').createHash('sha256').update(fs.readFileSync(path.join(badStaging,'database.dump'))).digest('hex');
+    fs.writeFileSync(path.join(badStaging,'manifest.json'),JSON.stringify(badManifest));
+    const badZip = path.join(directory,'missing-systems.zip');
+    await require('./complete-backup').writeZip(badStaging,badZip,zipKey);
+    assert.equal((await submitRestore(zipKey,password,badZip)).status,400);
+    assert.equal((await db.query('select name from events where id=$1',[eventId])).rows[0].name,'Cambio posterior al respaldo');
+    assert.equal(fs.readFileSync(path.join(process.env.STORAGE_PATH,restoredFile.storage_key),'utf8'),'changed-after-snapshot');
+    console.log('PASS rollback de restauracion fallida conserva base, archivos y acceso anterior');
+    const fullResponse = await submitRestore(zipKey, password);
+    assert.equal(fullResponse.status, 200, fullResponse.text);
+    assert.match(fullResponse.text, /Restauración completada/);
+    assert.equal((await db.query('select name from events where id=$1', [eventId])).rows[0].name, 'Revision aislada');
+    assert.deepEqual(fs.readFileSync(path.join(process.env.STORAGE_PATH, restoredFile.storage_key)), originalBytes);
+    assert.equal((await administrator.request('/systems')).location, '/login');
+    assert.equal((await administrator.login('admin@example.invalid')).status, 302);
+    assert.equal((await administrator.request('/systems')).status, 200);
+    console.log('PASS restauracion completa desde formulario: ZIP cifrado, permisos, claves, datos, adjuntos y cierre de sesiones');
     await attacker.request('/login');
     const originalCookie = attacker.cookie();
     assert.equal((await attacker.post('/login', { login: 'admin@example.invalid', password })).status, 302);

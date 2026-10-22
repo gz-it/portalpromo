@@ -5,29 +5,33 @@ Pendiente: autorizacion permanente de Drive de productores, subida automatica,
 retencion remota y correo con enlace privado. No estan activados todavia.
 El respaldo automatico de base de datos anterior continua funcionando.
 
-1. ARCHIVO .PPR: RECUPERACION DEL SISTEMA
-Base completa, codigo, configuracion y todos los archivos. Cifrado AES-256-GCM.
-Sirve para restaurar el portal en un VPS nuevo. Usar la clave PPR guardada aparte.
+1. ARCHIVO -RECUPERACION.ZIP: RECUPERACION DEL SISTEMA
+Base PostgreSQL nativa (database.dump), codigo, configuracion y todos los archivos.
+ZIP estandar con cifrado AES-256 y manifiesto SHA-256.
+En una instalacion nueva compatible: Sistemas > Restaurar sistema > subir ZIP,
+ingresar clave del ZIP, contrasena actual y confirmacion RESTAURAR.
+No sustituye instalar el portal ni configurar dominio, HTTPS, SSH o PostgreSQL.
 
 2. ARCHIVO .ZIP: CONSULTA SIN EL PORTAL
-Contenido del ZIP (AES-256, clave diferente guardada aparte):
+Contenido del ZIP (AES-256, clave guardada aparte):
 - Datos/*.csv: informacion de negocio consultable con Excel. Sin claves ni tokens.
 - Documentos/: archivos por evento y modulo.
 - Verificacion.json: cantidades y resultado de recuperacion aislada.
 - LEER-PRIMERO.txt: orientacion de consulta y restauracion.
-NO incluye PPR, base tecnica, codigo, credenciales ni configuracion de produccion.
+NO incluye base tecnica, codigo, credenciales ni configuracion de produccion.
 No requiere instalar el portal para consultar datos y documentos.
 No se afirma compatibilidad con todos los lectores ZIP: requiere soporte AES-256.
 
 Los dos archivos provienen de LA MISMA captura de la base, no de dos capturas.
-Verificacion.json identifica el nombre, fecha de captura y SHA-256 del PPR asociado.
+Verificacion.json identifica el nombre, fecha de captura y SHA-256 del ZIP de recuperacion asociado.
 
 Instalacion: pnpm install --frozen-lockfile (incluye archiver-zip-encrypted).
 Generacion manual como root, sin poner claves en los argumentos:
 
 node -r dotenv/config scripts/complete-backup.js /ruta/nuevo.zip /ruta/clave-ppr /ruta/clave-zip dotenv_config_path=/etc/portalpromo.env
 
-Genera /ruta/nuevo.zip y /ruta/nuevo.ppr. Ninguno debe existir previamente.
+Genera /ruta/nuevo.zip y /ruta/nuevo-recuperacion.zip. Ninguno debe existir previamente.
+La clave PPR solo se usa internamente para la prueba heredada; los archivos entregados son ZIP.
 No envia correo ni sube a Drive por si solo.
 
 La herramienta crea la clave ZIP si no existe (64 caracteres aleatorios).
@@ -49,12 +53,24 @@ Comprueba lectura e integridad de todos los archivos y rechazo de clave erronea.
 
 Para recuperar ante un desastre:
 1. Preparar VPS Ubuntu vacio con scripts/prepare-vps.sh y dependencias PostgreSQL.
-2. Obtener el archivo PPR separado y su clave guardada aparte. El ZIP no restaura el sistema.
-3. Crear base vacia y carpetas nuevas. No restaurar sobre produccion.
-4. Definir RESTORE_DATABASE_URL con la base nueva y ejecutar:
-   node scripts/recovery-backup.js restore --input recuperacion-completa.ppr --key /ruta/clave-ppr --uploads /ruta/nuevos-uploads --restored-env /ruta/nuevo.env --code /ruta/nuevo-codigo --confirm RESTAURAR
-5. Instalar dependencias del codigo, adaptar rutas/configuracion, HTTPS y servicio.
-6. Verificar acceso, eventos, archivos y correo antes de cambiar DNS.
+2. Instalar la copia limpia compatible y crear un acceso temporal de Sistemas.
+3. Entrar a Sistemas > Restaurar sistema y subir el ZIP terminado en -recuperacion.zip.
+4. Ingresar clave del ZIP, contrasena del usuario actual y RESTAURAR.
+5. El portal valida integridad y migraciones, guarda copia previa, activa mantenimiento,
+   recupera base/archivos y vuelve a cifrar el correo con la clave de la instalacion nueva.
+6. Ingresar con una cuenta de Sistemas del respaldo; todas las sesiones se invalidan.
+7. Revisar destinatarios de correo/backups antes de reactivar automatizaciones, que quedan pausadas.
+8. Verificar acceso, eventos, archivos y correo antes de cambiar DNS.
+
+El codigo ejecutable y el archivo .env del VPS NO se sobrescriben desde un archivo subido.
+La restauracion web exige misma VERSION y exactamente las mismas migraciones.
+Limites iniciales: ZIP hasta 1 GB; contenido extraido hasta 4 GB / 50000 entradas.
+Requiere Python con pyzipper (scripts/prepare-vps.sh lo prepara) y permisos de escritura
+del usuario del servicio en el directorio padre de uploads (modo 2770 grupo portalpromo).
+Si la recuperacion o rollback se interrumpen, .restore-in-progress mantiene mantenimiento
+tras reiniciar. Solo Sistemas debe resolverlo verificando copia-previa antes de retirar la marca.
+Las copias previas quedan privadas en backups/restauraciones/trabajo-*/copia-previa.
+Los backups .ppr anteriores siguen siendo restaurables mediante RECOVERY.md (procedimiento tecnico).
 
 La configuracion completa contiene secretos y debe ser accesible solo a Sistemas.
 La cuenta conectada al Drive del asistente es gestion@gzit.com.ar; no se uso

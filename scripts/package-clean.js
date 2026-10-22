@@ -5,8 +5,8 @@ const { spawnSync } = require('node:child_process');
 const archiver = require('archiver');
 
 const root = path.resolve(__dirname, '..');
-const scripts = new Set(['migrate.js', 'seed-admin.js', 'backup.js', 'update.js', 'prepare-vps.sh', 'recovery-backup.js', 'capture-recovery.sh', 'complete-backup.js', 'verify-complete-zip.py', 'package-clean.js', 'review-sandbox.js']);
-const documents = new Set(['README.md', 'RECOVERY.md', 'SECURITY.txt', 'VERSION', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.gitignore', 'INSTALACION-LIMPIA.txt']);
+const scripts = new Set(['migrate.js', 'seed-admin.js', 'backup.js', 'update.js', 'prepare-vps.sh', 'recovery-backup.js', 'capture-recovery.sh', 'complete-backup.js', 'verify-complete-zip.py', 'unpack-recovery-zip.py', 'package-clean.js', 'review-sandbox.js']);
+const documents = new Set(['README.md', 'RECOVERY.md', 'SECURITY.txt', 'VERSION', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.gitignore', 'INSTALACION-LIMPIA.txt', 'RESPALDO-COMPLETO.txt']);
 
 function include(name) {
   return /^(src|migrations|test)\//.test(name)

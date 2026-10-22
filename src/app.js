@@ -31,6 +31,7 @@ const { sendMail, verifyMail, getMailSettings, saveMailSettings } = require('./u
 const { sendVerification, confirmEmail, notifyRegistrationAdmins } = require('./services/registration');
 const { sendInvitation, acceptInvitation } = require('./services/invitations');
 const { removeUser } = require('./services/user-removal');
+const { fullRestoreUpload, restoreFullBackup } = require('./services/full-restore');
 const { hashPassword, verifyPassword, makeToken, hashToken, safeWebUrl } = require('./utils/security');
 const { esc, layout, authPage, eventHeader, table, optionList } = require('./ui');
 const { loadSettings, setSetting } = require('./services/settings');
@@ -56,6 +57,7 @@ const { safeRoutes, errorHandler } = require('./middleware/safe-routes');
 const routes = safeRoutes(app);
 app.disable('x-powered-by');
 app.set('trust proxy', 'loopback');
+routes.use(require('./services/restore-maintenance').middleware);
 routes.use((req, res, next) => {
   res.locals.cspNonce = crypto.randomBytes(24).toString('base64');
   res.setHeader('Cache-Control', 'no-store');
@@ -976,6 +978,27 @@ routes.post('/admin/updates/run', requireLogin, requireRole(ROLES.SYSTEMS), asyn
   res.redirect('/systems');
 });
 
+routes.get('/systems/restore', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
+  res.send(layout(req, 'Restaurar sistema', `<section class="toolbar"><div><a class="button" href="/systems">← Volver a Sistemas</a><h1>Restaurar sistema</h1></div></section><section class="dossier-section"><p>Esta operación reemplaza los usuarios, eventos, documentos y configuración del portal. Se conservará una copia previa. Al terminar, deberá ingresar con una cuenta del respaldo.</p><p>Seleccione el archivo terminado en <b>-recuperacion.zip</b>. El ZIP de consulta no permite restaurar el sistema. El código instalado, dominio, HTTPS y accesos del VPS no se reemplazan.</p><form method="post" action="/systems/restore?_csrf=${req.csrfToken}" enctype="multipart/form-data" class="form-stack"><label>Respaldo de recuperación (ZIP, máximo 1 GB)<input name="file" type="file" accept=".zip" required></label><label>Clave del respaldo<input name="backup_password" type="password" required autocomplete="off"></label><label>Tu contraseña actual de Sistemas<input name="current_password" type="password" required autocomplete="current-password"></label><label>Confirmación<input name="confirmation" placeholder="Escribir RESTAURAR" pattern="RESTAURAR" required></label><button class="danger" type="submit">Restaurar sistema</button></form></section>`));
+});
+
+routes.post('/systems/restore', requireLogin, requireRole(ROLES.SYSTEMS), sensitiveLimit, fullRestoreUpload.single('file'), async (req, res) => {
+  try {
+    if (!await confirmCurrentPassword(req, res)) return;
+    if (req.body.confirmation !== 'RESTAURAR') return res.status(400).send('Escriba RESTAURAR para confirmar.');
+    if (!req.file) return res.status(400).send('Seleccione el ZIP de recuperacion.');
+    await restoreFullBackup(req.file, req.body.backup_password, req.user);
+    delete app.locals.portalSettings;
+    await new Promise((resolve, reject) => req.session.destroy(error => error ? reject(error) : resolve()));
+    res.clearCookie('connect.sid');
+    res.send('<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Restauracion completada</title><main><h1>Restauración completada</h1><p>Se recuperaron los datos, documentos y configuración del portal. Se cerraron todas las sesiones. Las automatizaciones de backup quedaron pausadas hasta que revise sus destinatarios.</p><a href="/login">Ingresar con una cuenta del respaldo</a></main></html>');
+  } catch (error) {
+    res.status(400).send(layout(req, 'Restauracion no completada', `<section class="dossier-section"><h1>No se completó la restauración</h1><p>${esc(error.message)}</p><a class="button" href="/systems/restore">Volver a restauración</a></section>`));
+  } finally {
+    if (req.file) fs.rmSync(req.file.path, { force: true });
+  }
+});
+
 routes.get('/systems', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res) => {
   const version = fs.readFileSync(path.join(config.root, 'VERSION'), 'utf8').trim();
   const [mail, backup, backups] = await Promise.all([
@@ -986,7 +1009,7 @@ routes.get('/systems', requireLogin, requireRole(ROLES.SYSTEMS), async (req, res
   const weekdayNames = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
   const weekdayOptions = (selected) => weekdayNames.map((name, index) => `<option value="${index}" ${index === selected ? 'selected' : ''}>${name}</option>`).join('');
   const backupRows = backups.rows.map((row) => `<tr><td><b>${esc(row.filename || 'Sin archivo')}</b><br><small>${esc(row.source)}</small></td><td><span class="badge">${esc(row.status)}</span></td><td>${row.size_bytes ? `${Math.round(Number(row.size_bytes) / 1024)} KB` : '-'}</td><td>${esc(new Date(row.created_at).toLocaleString('es-AR'))}</td><td><div class="row-actions">${row.storage_path ? `<a href="/systems/backups/${row.id}/download">Descargar</a>` : ''}</div>${row.storage_path ? `<details><summary>Restaurar</summary><form method="post" action="/systems/backups/${row.id}/restore" class="form-stack compact-form"><input type="hidden" name="_csrf" value="${req.csrfToken}"><input name="confirmation" placeholder="Escribir RESTAURAR" required pattern="RESTAURAR"><label>Contraseña actual<input name="current_password" type="password" required autocomplete="current-password"></label><button>Confirmar restauración</button></form></details>` : ''}</td></tr>`);
-  res.send(layout(req, 'Sistemas', `<section class="toolbar"><div><h1>Sistemas</h1><p>Correo, automatizaciones y resguardo de la base de datos.</p></div></section><section class="dossier-section"><h2>Mantenimiento</h2><p>Versión instalada: ${esc(version)}</p><form method="post" action="/admin/updates/check"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Registrar revisión de versión</button></form><form method="post" action="/admin/updates/run"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Solicitar actualización al responsable técnico</button></form></section><div class="systems-grid">
+  res.send(layout(req, 'Sistemas', `<section class="toolbar"><div><h1>Sistemas</h1><p>Correo, automatizaciones y respaldos.</p></div><a class="button" href="/systems/restore">Restaurar sistema</a></section><section class="dossier-section"><h2>Mantenimiento</h2><p>Versión instalada: ${esc(version)}</p><form method="post" action="/admin/updates/check"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Registrar revisión de versión</button></form><form method="post" action="/admin/updates/run"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Solicitar actualización al responsable técnico</button></form></section><div class="systems-grid">
     <form method="post" action="/systems/mail" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2 class="span">Correo de notificaciones</h2><label>Servidor SMTP<input name="host" value="${esc(mail.host)}" placeholder="smtp.ejemplo.com"></label><label>Puerto<input name="port" type="number" value="${esc(mail.port)}"></label><label>Usuario<input name="user" value="${esc(mail.user)}"></label><label>Remitente<input name="from" value="${esc(mail.from)}"></label><label class="span">Contraseña SMTP<input name="password" type="password" placeholder="${mail.hasStoredPassword ? 'Configurada; dejar vacío para conservar' : 'Ingresar contraseña'}"></label><label class="check-label"><input name="secure" type="checkbox" ${mail.secure ? 'checked' : ''}> Usar conexión SSL directa</label><button class="primary span">Guardar correo</button></form>
     <section class="panel"><h2>Probar correo</h2><p>Estado: <b>${mail.host && mail.user && (mail.hasStoredPassword || config.smtp.password) ? 'Configurado' : 'Pendiente'}</b></p><form method="post" action="/systems/mail/test" class="form-stack"><input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Enviar prueba a<input name="email" type="email" value="${esc(req.user.email)}" required></label><button>Enviar prueba</button></form></section>
     <form method="post" action="/systems/backups/settings" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2 class="span">Backup automático</h2><label>Frecuencia<select name="frequency"><option value="daily" ${backup.frequency === 'daily' ? 'selected' : ''}>Diario</option><option value="weekly" ${backup.frequency === 'weekly' ? 'selected' : ''}>Una vez por semana</option><option value="twice_weekly" ${backup.frequency === 'twice_weekly' ? 'selected' : ''}>Dos veces por semana</option></select></label><label>Hora<input name="time" type="time" value="${esc(backup.time)}" required></label><label>Primer día<select name="weekday_1">${weekdayOptions(backup.weekdays[0])}</select></label><label>Segundo día<select name="weekday_2">${weekdayOptions(backup.weekdays[1])}</select></label><label>Email destinatario 1<input name="email_1" type="email" value="${esc(backup.emails[0])}" placeholder="sistemas@empresa.com"></label><label>Email destinatario 2<input name="email_2" type="email" value="${esc(backup.emails[1])}" placeholder="responsable@empresa.com"></label><label>Conservar durante<input name="retention_days" type="number" min="1" value="${backup.retentionDays}"></label><label class="check-label"><input name="enabled" type="checkbox" ${backup.enabled ? 'checked' : ''}> Activar backup automático</label><label class="check-label"><input name="send_file" type="checkbox" ${backup.sendFile ? 'checked' : ''}> Adjuntar al email si pesa menos de 20 MB</label><button class="primary span">Guardar automatización</button></form>
