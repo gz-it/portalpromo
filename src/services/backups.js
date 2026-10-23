@@ -3,6 +3,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const multer = require('multer');
 const sanitize = require('sanitize-filename');
+const { randomUUID } = require('node:crypto');
 const config = require('../config');
 const db = require('../db');
 const { pgEnvironment } = require('../utils/pg-environment');
@@ -20,10 +21,11 @@ fs.mkdirSync(config.backupPath, { recursive: true });
 function run(command, args) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { shell: false, env: pgEnvironment(config.databaseUrl) });
-    let errorText = '';
-    child.stderr.on('data', (chunk) => { errorText += chunk.toString(); });
-    child.on('error', reject);
-    child.on('exit', (code) => code === 0 ? resolve() : reject(new Error(errorText.trim() || `${command} finalizó con código ${code}`)));
+    const timeout = setTimeout(() => child.kill('SIGKILL'), 240000);
+    child.stdout.resume();
+    child.stderr.resume();
+    child.on('error', error => { clearTimeout(timeout); reject(error); });
+    child.on('close', code => { clearTimeout(timeout); code === 0 ? resolve() : reject(new Error('No se pudo completar la operacion de base de datos.')); });
   });
 }
 
@@ -114,16 +116,25 @@ async function createBackup({ source = 'MANUAL', userId = null, notify = true } 
 
 const backupUpload = multer({
   storage: multer.diskStorage({
-    destination(req, file, cb) { cb(null, config.backupPath); },
-    filename(req, file, cb) { cb(null, `subido-${Date.now()}-${sanitize(file.originalname)}`); },
+    destination(req, file, cb) {
+      fs.statfs(config.backupPath, (error, stats) => {
+        if (error) return cb(error);
+        if (Number(stats.bavail) * Number(stats.bsize) < 1536 * 1024 ** 2) return cb(Object.assign(new Error('Espacio insuficiente.'), { status: 503 }));
+        cb(null, config.backupPath);
+      });
+    },
+    filename(req, file, cb) { cb(null, `subido-${randomUUID()}.dump`); },
   }),
-  limits: { fileSize: 1024 * 1024 * 1024 },
+  limits: { fileSize: 1024 * 1024 * 1024, files: 1, fields: 2, parts: 3, fieldSize: 4096 },
   fileFilter(req, file, cb) { cb(null, path.extname(file.originalname).toLowerCase() === '.dump'); },
 });
 
 async function registerUploadedBackup(file, userId) {
-  return (await db.query(`insert into backup_runs (filename,storage_path,source,status,size_bytes,requested_by,finished_at)
-    values ($1,$2,'UPLOAD','UPLOADED',$3,$4,now()) returning *`, [file.originalname, file.path, file.size, userId])).rows[0];
+  try {
+    await run(config.pgRestoreBin, ['--list', file.path]);
+    return (await db.query(`insert into backup_runs (filename,storage_path,source,status,size_bytes,requested_by,finished_at)
+      values ($1,$2,'UPLOAD','UPLOADED',$3,$4,now()) returning *`, [sanitize(file.originalname), file.path, file.size, userId])).rows[0];
+  } catch (error) { await fs.promises.unlink(file.path).catch(() => {}); throw error; }
 }
 
 async function resolveBackup(id) {
@@ -136,8 +147,40 @@ async function resolveBackup(id) {
 }
 
 async function restoreBackup(row, userId) {
-  await createBackup({ source: 'PRE_RESTORE', userId, notify: false });
-  await run(config.pgRestoreBin, ['--clean', '--if-exists', '--single-transaction', '--exit-on-error', '--no-owner', '--no-privileges', '--dbname', new URL(config.databaseUrl).pathname.slice(1), row.target]);
+  await run(config.pgRestoreBin, ['--list', row.target]);
+  let release = await require('./restore-maintenance').acquire();
+  let previous;
+  let changed = false;
+  const args = ['--clean', '--if-exists', '--single-transaction', '--exit-on-error', '--no-owner', '--no-privileges', '--dbname', new URL(config.databaseUrl).pathname.slice(1)];
+  try {
+    const deadline = Date.now() + 15000;
+    while (schedulerRunning && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+    if (schedulerRunning) throw new Error('Hay un respaldo en curso. Intente nuevamente.');
+    previous = await createBackup({ source: 'PRE_RESTORE', userId, notify: false });
+    await run(config.pgRestoreBin, [...args, row.target]);
+    changed = true;
+    await db.tx(async client => {
+      const systems = await client.query("select 1 from users u join user_roles ur on ur.user_id=u.id join roles r on r.id=ur.role_id where u.status='ACTIVO' and r.name='SISTEMAS' limit 1");
+      if (!systems.rowCount) throw new Error('El respaldo no contiene una cuenta activa de Sistemas.');
+      const files = (await client.query('select storage_key,size_bytes from attachments')).rows;
+      const { resolveAttachment } = require('./storage');
+      for (const file of files) if (!fs.existsSync(resolveAttachment(file)) || fs.statSync(resolveAttachment(file)).size !== Number(file.size_bytes)) throw new Error('Faltan documentos. Use un ZIP de recuperacion completo.');
+      await require('../utils/email').getMailSettings();
+      await client.query('delete from session');
+      for (const table of ['password_reset_tokens','user_invitation_tokens','email_verification_tokens']) await client.query(`update ${table} set used_at=now() where used_at is null`);
+      await client.query("delete from system_settings where key='security_alert_outbox' or left(key,11)='auth_guard_'");
+      await client.query("update system_settings set value='false' where key='backup_enabled'");
+    });
+  } catch (error) {
+    if (changed) {
+      try { await run(config.pgRestoreBin, [...args, previous.target]); }
+      catch {
+        release = null;
+        throw new Error('Se requiere intervencion tecnica. El portal permanece en mantenimiento con copia previa.');
+      }
+    }
+    throw error;
+  } finally { if (release) release(); }
 }
 
 let schedulerTimer;

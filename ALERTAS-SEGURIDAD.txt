@@ -9,10 +9,13 @@ por decision del propietario. SSH sigue con su acceso actual.
 AVISOS DEL PORTAL
 - Diez intentos fallidos en una ventana de 15 minutos, o limite de login alcanzado.
   El limite de login sigue siendo de 20 solicitudes por IP cada 15 minutos.
+  Desde el 23/10 tambien hay bloqueo temporal por cuenta tras diez errores,
+  persistente e independiente de la IP. Ver SEGURIDAD-2026-10-23.txt.
 - Ingreso ADMINISTRADOR/SISTEMAS con IP nueva para esa cuenta. Se recuerdan las
   ultimas diez IP por cuenta: el primer ingreso luego de activar esto tambien avisa.
   Una IP nueva puede ser un cambio legitimo de red, no prueba una intrusion.
 - Cambios de roles/estado/alta/baja de usuarios y de cuenta administrativa.
+- Intentos de administrar u otorgar Sistemas sin el rol de Sistemas.
 - Recuperacion efectiva de contrasena; cambios SMTP o de respaldos; restauraciones.
 - Archivo detectado por ClamAV o imposibilidad de verificar una carga.
 
@@ -44,6 +47,9 @@ ENTREGA Y AGRUPACION
   SMTP y confirmacion en PostgreSQL puede repetirse excepcionalmente un resumen.
 - El monitor conserva transiciones pendientes bajo /var/lib/portalpromo-security,
   directorio root 700, si no puede escribir en PostgreSQL.
+- El monitor externo al proceso web puede intentar entregar tambien durante
+  mantenimiento, si DB y SMTP responden. El emisor del proceso web espera a que
+  termine la restauracion para no interferir con ella.
 - La restauracion completa descarta avisos viejos del snapshot y agrega su propio
   aviso nuevo; no reproduce automaticamente todas las alertas antiguas.
 

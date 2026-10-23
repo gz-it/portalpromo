@@ -1,0 +1,121 @@
+PORTAL DE PRODUCTORES - SEGUNDA REVISION DE SEGURIDAD
+23/10/2026. VPS definitivo 149.50.151.139. No se modifico CCTV.
+
+ALCANCE Y LIMITES
+Revision propia de codigo y configuracion, pruebas automatizadas e integracion
+en bases PostgreSQL aisladas. No es certificacion ni auditoria independiente.
+No se hicieron pruebas de saturacion ni ataques contra otros servidores.
+Se mantiene mail/contrasena sin MFA y SSH por contrasena por pedido del propietario.
+No existe una garantia de que el sistema sea invulnerable.
+
+HALLAZGOS CORREGIDOS
+
+1. Alta: separacion insuficiente entre Administracion y Sistemas.
+   Antes un administrador podia otorgar Sistemas o modificar esa cuenta.
+   Requeria ya tener un acceso administrativo, no era acceso anonimo.
+   Ahora solo Sistemas puede crear/otorgar Sistemas o gestionar esas cuentas
+   (rol, bloqueo, borrado, restauracion o reenvio de invitacion).
+   Administracion conserva su gestion normal de productores y otros roles.
+   Sistemas tiene acceso a Usuarios y accesos sin obtener por ello permisos
+   de aprobacion de eventos. Un cambio de rol cierra las sesiones del destinatario.
+   La interfaz oculta acciones y opciones que no corresponden; el servidor
+   valida igualmente aunque se fabrique una peticion manual.
+
+2. Media: el limite de ingreso por IP no basta para un ataque distribuido.
+   Se agrega un contador persistente por cuenta real: diez errores en quince
+   minutos bloquean temporalmente nuevos ingresos a esa cuenta por quince minutos.
+   Cambiar IP, sesion o reiniciar Node no evita este contador.
+   Los intentos durante el bloqueo no extienden indefinidamente su vencimiento.
+   Las sesiones validas existentes no se cierran por errores de un tercero.
+   Recuperar la clave por mail, cambiarla desde la cuenta o aceptar la invitacion
+   limpia ese estado. No se cambia el estado ACTIVO de la cuenta por estos errores.
+   Se limita a cuatro verificaciones simultaneas de contrasena para acotar CPU.
+   Un atacante que conoce un email aun puede provocar un bloqueo temporal:
+   es una limitacion inherente a esta defensa, no se considera eliminada.
+
+3. Media: cargas sin titulo/invalidas podian dejar archivos sin registro.
+   Se eliminan los archivos no conservados al finalizar o cerrar la respuesta,
+   y los rechazados por validacion o por fallo de registro en base de datos.
+   No se elimina un archivo mientras se esta confirmando su guardado en DB.
+   Se comprobo el aborto real de un multipart: sin archivo parcial ni cupo retenido.
+   Maximo dos cargas simultaneas por usuario y ocho en total, con reserva de
+   espacio por cargas activas. Se usan nombres internos UUID y extension fija,
+   sin incorporar el nombre del cliente a la ruta fisica.
+   Los modulos invalidos se rechazan antes de recibir/guardar archivos.
+
+4. Media: restaurar un .dump podia reintroducir sesiones incluidas en el respaldo.
+   El circuito antiguo ahora usa mantenimiento, copia previa, validacion de
+   cuenta activa de Sistemas y existencia/tamano de los documentos, y comprueba
+   que la configuracion SMTP pueda leerse en esta instalacion.
+   Si falla despues de reemplazar DB, recupera la copia previa; si falla ese
+   rollback, mantiene mantenimiento para impedir uso de un estado parcial.
+   Al completar cierra todas las sesiones, limpia contadores/avisos temporales
+   y pausa el backup de base hasta revisar sus destinatarios, como el ZIP completo.
+   Ambos circuitos invalidan enlaces antiguos de recuperacion, invitacion y
+   verificacion: no se reactivan tokens que estaban dentro del snapshot.
+   La carga .dump valida el formato con pg_restore --list sin ejecutar su SQL,
+   limita multipart y verifica espacio. Un .dump NO contiene documentos originales.
+   Restaurar SQL sigue siendo una operacion privilegiada: no aceptar respaldos
+   de origen desconocido. La cuenta PostgreSQL del portal no es superusuario.
+
+5. Media: el proxy podia almacenar el cuerpo completo antes del rechazo web.
+   Nginx ahora transmite el cuerpo al backend sin almacenarlo integramente primero,
+   de modo que autenticacion/CSRF puedan rechazar antes una carga no autorizada.
+   Prueba HTTPS real enviando solo cabeceras: 403 con cero bytes de archivo enviados.
+   Se verifico TLS con curl y el almacen de confianza del sistema operativo;
+   no se desactivo la validacion del certificado.
+
+6. Refuerzo de recuperacion: una solicitud por cuenta cada cinco minutos,
+   aun cambiando IP. La respuesta no revela si existe ni si fallo SMTP.
+   Los tokens siguen siendo aleatorios, de un uso, con hash y vencimiento.
+   Cambiar email o clave invalida recuperaciones previas y otras sesiones,
+   con actualizacion atomica de estos datos y rotacion de la sesion actual.
+
+COMPROBACIONES
+- 83 pruebas Node aprobadas y pnpm audit --prod sin avisos conocidos.
+- Integracion PostgreSQL aislada: invitaciones/correos simulados, permisos
+  cruzados, SQL/XSS basicos, sesiones, bloqueo persistente y recuperacion,
+  proteccion de Sistemas, cargas invalidas, backups, ZIP, .dump y rollback.
+- No se restauraron datos sobre produccion ni se bloquearon cuentas reales
+  para probar el limite de intentos.
+- Copia completa previa al despliegue, validada en DB y archivos aislados:
+  /var/backups/portalpromo-drive/portal-2026-10-23T12-38-30-575Z.zip
+  y su archivo terminado en -recuperacion.zip.
+- Codigo previo en /root/portal-before-security-second-review-2026-10-23.tar.gz.
+- Login HTTPS funcional. SSH, contrasenas y destinatarios de backups sin cambios.
+
+HALLAZGO DE INFRAESTRUCTURA PENDIENTE DE DECISION
+El registro de qemu-guest-agent del 23/10 a las 09:34:23 Argentina muestra
+guest-exec ejecutando ufw allow from 200.58.112.191 y reinsertando un ACCEPT
+directo en INPUT para esa misma IP, por delante de las cadenas de UFW.
+Esto explica por que reaparecio una excepcion retirada en la revision anterior.
+Es ejecucion mediante el canal de administracion de la VM, no se encontro prueba
+de una intrusion en el portal. La atribucion al panel/proveedor debe confirmarse
+con Donweb: el registro acredita el comando y el canal, no quien pulso la accion.
+No se desactivo el agente ni se modificaron sus RPC sin autorizacion: hacerlo
+podria afectar terminal/acciones remotas de Donweb. Se solicito esa decision.
+El monitor detecta la excepcion y avisa a Gestion. No afirmar firewall sin
+excepciones mientras este punto siga abierto. Node/PostgreSQL siguen ligados
+a loopback y los servicios SMTP local/SNMP innecesarios siguen desactivados.
+
+OTROS RIESGOS NO ELIMINADOS
+- Se hizo un control complementario limitado de claves de prueba/compartidas.
+  Los resultados particulares y decisiones de rotacion se entregan privadamente,
+  no en este repositorio. Una clave conocida que siga valida no se compensa
+  con antivirus o limites de intentos; no certificar acceso seguro sin revisarla.
+- Sin MFA, una contrasena valida robada puede permitir acceso.
+- Las claves compartidas por chat y la clave corta de los ZIP deben rotarse;
+  no se cambiaron silenciosamente. Backups anteriores conservan su propia clave.
+- Falta monitoreo desde fuera del VPS y proteccion DDoS del proveedor/CDN.
+- El administrador del hipervisor/proveedor sigue siendo parte de confianza:
+  cambiar un agente dentro de la VM no protege frente a un hipervisor comprometido.
+- Un antivirus no detecta todo el malware y los documentos deben tratarse
+  como contenido no confiable, aun cuando el escaneo no tenga detecciones.
+- Tras restaurar un respaldo anterior, revisar tambien las contrasenas y roles:
+  los hashes de claves vuelven al estado del snapshot, aunque se invaliden sus
+  sesiones y enlaces de recuperacion.
+
+REFERENCIAS
+https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html
+https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html
+https://www.qemu.org/docs/master/interop/qemu-ga.html

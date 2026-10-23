@@ -106,8 +106,9 @@ async function restoreFullBackup(file, password, actor = {}) {
       const mail = (await client.query("select value from system_settings where key='smtp_password_encrypted'")).rows[0]?.value;
       if (mail) await client.query("update system_settings set value=$1 where key='smtp_password_encrypted'", [rewrapMailSecret(mail, oldEnv.SESSION_SECRET)]);
       await client.query('delete from session');
+      for (const table of ['password_reset_tokens','user_invitation_tokens','email_verification_tokens']) await client.query(`update ${table} set used_at=now() where used_at is null`);
       await client.query("update system_settings set value='false' where key='backup_enabled'");
-      await client.query("delete from system_settings where key='security_alert_outbox'");
+      await client.query("delete from system_settings where key='security_alert_outbox' or left(key,11)='auth_guard_'");
       await client.query("insert into audit_logs(action,entity_type,detail) values('restaurar_sistema','backups',$1)", [{ requested_by_email:actor.email || null, snapshot_at:manifest.createdAt }]);
     });
     fs.writeFileSync(path.join(previous, 'LEER.txt'), 'Copia previa a restauracion: database.dump y uploads. Mantener privada. No se elimina automaticamente.\n', { mode: 0o600 });

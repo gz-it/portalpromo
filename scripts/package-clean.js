@@ -18,6 +18,7 @@ function include(name) {
     || name === 'deploy/portalpromo-security-monitor.service'
     || name === 'deploy/portalpromo-security-monitor.timer'
     || name === 'ALERTAS-SEGURIDAD.txt'
+    || name === 'SEGURIDAD-2026-10-23.txt'
     || name === 'nginx/portal.conf.example'
     || documents.has(name);
 }

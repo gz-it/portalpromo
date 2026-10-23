@@ -11,6 +11,7 @@ const KINDS = {
   LOGIN_LIMIT: ['Se bloqueo temporalmente una rafaga de intentos de ingreso', 1],
   ADMIN_NEW_IP: ['Ingreso administrativo desde una IP nueva o no registrada', 1],
   ROLE_CHANGED: ['Se modificaron permisos o accesos de usuarios', 1],
+  PRIVILEGE_DENIED: ['Se bloqueo un intento de gestionar permisos de Sistemas sin autorizacion', 1],
   ACCOUNT_CHANGED: ['Se modifico una cuenta administrativa', 1],
   PASSWORD_RESET: ['Se cambio una contrasena mediante recuperacion', 1],
   MAIL_CHANGED: ['Se modifico el correo de notificaciones', 1],
@@ -131,8 +132,8 @@ function acknowledge(state, batch, ok, now) {
   }
 }
 
-async function flushSecurityAlerts({ force = false, mail = sendMail } = {}) {
-  if (!enabled() || require('./restore-maintenance').isRestoring()) return { sent: false, deferred: true };
+async function flushSecurityAlerts({ force = false, mail = sendMail, allowMaintenance = false } = {}) {
+  if (!enabled() || (!allowMaintenance && require('./restore-maintenance').isRestoring())) return { sent: false, deferred: true };
   const batch = await mutate(KEY, state => claim(state, Date.now(), force));
   if (!batch) return { sent: false, deferred: true };
   let sent = false;

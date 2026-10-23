@@ -25,6 +25,7 @@ async function acceptInvitation(token, password) {
       invitation_pending=false,email_verified_at=now(),updated_at=now() where id=$1 returning id,email`,
     [invite.user_id, passwordHash])).rows[0];
     await client.query('update user_invitation_tokens set used_at=now() where user_id=$1 and used_at is null', [invite.user_id]);
+    await client.query('delete from system_settings where key=$1', [`auth_guard_${invite.user_id}`]);
     return user;
   });
 }

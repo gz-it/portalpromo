@@ -28,6 +28,8 @@ const {
 const { csrf } = require('./middleware/csrf');
 const { audit } = require('./utils/audit');
 const { safelyQueue, recordAdminLogin } = require('./services/security-alerts');
+const loginGuard = require('./services/login-guard');
+const { mayManageUser, guardUserMutation } = require('./middleware/user-management');
 const { sendMail, verifyMail, getMailSettings, saveMailSettings } = require('./utils/email');
 const { sendVerification, confirmEmail, notifyRegistrationAdmins } = require('./services/registration');
 const { sendInvitation, acceptInvitation } = require('./services/invitations');
@@ -107,6 +109,14 @@ function parseBody(schema, body) {
   if (!parsed.success) throw Object.assign(new Error(parsed.error.issues[0].message), { status: 400 });
   return parsed.data;
 }
+
+function requireModuleKey(req, res, next) {
+  if (!MODULES.some(module => module.key === req.params.moduleKey)) return res.status(400).send('Modulo invalido');
+  next();
+}
+routes.use('/events/:eventId/modules/:moduleKey', requireModuleKey);
+routes.use('/admin/events/:eventId/modules/:moduleKey', requireModuleKey);
+routes.use('/events/:eventId/review/:moduleKey', requireModuleKey);
 
 async function confirmCurrentPassword(req, res) {
   const value = req.body.current_password;
@@ -202,7 +212,12 @@ routes.post('/login', rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardH
     [req.body.login],
   );
   const user = result.rows[0];
-  if (!user || !(await verifyPassword(req.body.password || '', user.password_hash))) {
+  if (user && await loginGuard.blockedUntil(user.id)) {
+    res.set('Retry-After', '900');
+    return res.status(429).send('No se pudo ingresar. Espere unos minutos antes de volver a intentar.');
+  }
+  if (!user || !(await loginGuard.checkPassword(req.body.password || '', user.password_hash))) {
+    if (user && await loginGuard.recordFailure(user.id)) await safelyQueue('LOGIN_LIMIT', { targetId: user.id, ip: req.ip });
     await safelyQueue('LOGIN_FAILED', { ip: req.ip });
     flash(req, 'error', 'Credenciales invalidas');
     return res.redirect('/login');
@@ -219,6 +234,7 @@ routes.post('/login', rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardH
     flash(req, 'error', 'Confirmá tu email antes de ingresar. Podés reenviar la confirmación.');
     return res.redirect('/login');
   }
+  await loginGuard.clear(user.id);
   await new Promise((resolve, reject) => req.session.regenerate(error => error ? reject(error) : resolve()));
   req.session.userId = user.id;
   await audit(user.id, 'login', 'users', user.id);
@@ -232,12 +248,17 @@ routes.post('/logout', requireLogin, async (req, res) => {
 });
 
 routes.post('/forgot', rateLimit({ windowMs: 60 * 60 * 1000, limit: 5 }), async (req, res) => {
-  const user = (await db.query('select * from users where email=$1', [req.body.email])).rows[0];
-  if (user) {
+  const email = typeof req.body.email === 'string' && req.body.email.length <= 254 ? req.body.email.trim().toLowerCase() : '';
+  const delivery = await db.tx(async client => {
+    const user = (await client.query("select id,email from users where email=$1 and status='ACTIVO' for update", [email])).rows[0];
+    if (!user) return null;
+    const recent = await client.query("select 1 from password_reset_tokens where user_id=$1 and created_at>now()-interval '5 minutes' limit 1", [user.id]);
+    if (recent.rowCount) return null;
     const token = makeToken();
-    await db.query('insert into password_reset_tokens (user_id, token_hash, expires_at) values ($1,$2,now()+interval \'1 hour\')', [user.id, hashToken(token)]);
-    await sendMail(user.email, 'Recuperacion de contrasena', `Use este enlace para cambiar su contrasena: ${config.appUrl}/reset/${token}`);
-  }
+    await client.query('insert into password_reset_tokens (user_id, token_hash, expires_at) values ($1,$2,now()+interval \'1 hour\')', [user.id, hashToken(token)]);
+    return { email:user.email,token };
+  });
+  if (delivery) await sendMail(delivery.email, 'Recuperacion de contrasena', `Use este enlace para cambiar su contrasena: ${config.appUrl}/reset/${delivery.token}`).catch(() => console.error('No se pudo enviar un correo de recuperacion.'));
   flash(req, 'ok', 'Si el email existe, enviamos instrucciones de recuperacion.');
   res.redirect('/login');
 });
@@ -255,6 +276,7 @@ routes.post('/reset/:token', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }),
     const row = (await client.query('select * from password_reset_tokens where token_hash=$1 and used_at is null and expires_at>now() for update', [tokenHash])).rows[0];
     if (!row) return false;
     await client.query('update users set password_hash=$1, updated_at=now() where id=$2', [passwordHash, row.user_id]);
+    await client.query('delete from system_settings where key=$1', [`auth_guard_${row.user_id}`]);
     await client.query('update password_reset_tokens set used_at=now() where user_id=$1 and used_at is null', [row.user_id]);
     await client.query('delete from session where sess->>\'userId\'=$1', [row.user_id]);
     return row.user_id;
@@ -520,7 +542,11 @@ routes.post('/events/:eventId/staff', requireLogin, loadAuthorizedEvent, require
   res.redirect(`/events/${req.event.id}/modules/identificacion`);
 });
 
-routes.post('/events/:eventId/modules/:moduleKey/items', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), upload.single('file'), async (req, res) => {
+routes.post('/events/:eventId/modules/:moduleKey/items', requireLogin, loadAuthorizedEvent, requireRole(ROLES.PRODUCER), (req, res, next) => {
+  if (!['seguros','habilitaciones','servicios','prensa','tecnica','comercial','sponsors'].includes(req.params.moduleKey)) return res.status(400).send('Modulo invalido para este archivo');
+  next();
+}, upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).send('Seleccione un archivo.');
   const key = req.params.moduleKey;
   const attachment = await saveAttachment({ file: req.file, eventId: req.event.id, moduleKey: key, userId: req.user.id });
   const title = req.body.title || req.body.category;
@@ -714,24 +740,27 @@ routes.get('/admin', requireLogin, requireRole(ROLES.ADMIN), async (req, res) =>
   `));
 });
 
-routes.get('/admin/users', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.use('/admin/users/:id', requireLogin, requireRole(ROLES.ADMIN, ROLES.SYSTEMS), guardUserMutation);
+
+routes.get('/admin/users', requireLogin, requireRole(ROLES.ADMIN, ROLES.SYSTEMS), async (req, res) => {
   const showDisabled = req.query.show === 'disabled';
   const users = await db.query(`select u.*, count(distinct e.id) event_count, array_remove(array_agg(distinct r.name), null) roles from users u left join events e on e.owner_user_id=u.id left join user_roles ur on ur.user_id=u.id left join roles r on r.id=ur.role_id where (u.status='DESHABILITADO')=$1 group by u.id order by u.created_at desc`, [showDisabled]);
   const rows = users.rows.map((u)=>{
-    const actions = showDisabled ? `<form method="post" action="/admin/users/${u.id}/restore"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Restaurar y enviar invitación</button></form>` : `${u.invitation_pending && u.status === 'PENDIENTE' ? `<form method="post" action="/admin/users/${u.id}/invitation"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Reenviar invitación</button></form>` : ''}<form method="post" action="/admin/users/${u.id}/status"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="status">${optionList(['PENDIENTE','ACTIVO','BLOQUEADO','DESHABILITADO'], u.status)}</select><button>Guardar estado</button></form><form method="post" action="/admin/users/${u.id}/role"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="role">${optionList(['PRODUCTOR','GERENCIADORA','ADMINISTRADOR','SISTEMAS'], (u.roles || [])[0])}</select><button>Guardar rol</button></form>${u.id !== req.user.id ? `<a class="button danger" href="/admin/users/${u.id}/delete">Eliminar usuario</a>` : '<small>Tu cuenta</small>'}`;
+    let actions = showDisabled ? `<form method="post" action="/admin/users/${u.id}/restore"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Restaurar y enviar invitación</button></form>` : `${u.invitation_pending && u.status === 'PENDIENTE' ? `<form method="post" action="/admin/users/${u.id}/invitation"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Reenviar invitación</button></form>` : ''}<form method="post" action="/admin/users/${u.id}/status"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="status">${optionList(['PENDIENTE','ACTIVO','BLOQUEADO','DESHABILITADO'], u.status)}</select><button>Guardar estado</button></form><form method="post" action="/admin/users/${u.id}/role"><input type="hidden" name="_csrf" value="${req.csrfToken}"><select name="role">${optionList(Object.values(ROLES).filter(role => role !== ROLES.SYSTEMS || isSystems(req.user)), (u.roles || [])[0])}</select><button>Guardar rol</button></form>${u.id !== req.user.id ? `<a class="button danger" href="/admin/users/${u.id}/delete">Eliminar usuario</a>` : '<small>Tu cuenta</small>'}`;
+    if (!mayManageUser(req.user, u.roles)) actions = '<small>Gestión exclusiva de Sistemas</small>';
     return `<tr><td>${esc(u.first_name)} ${esc(u.last_name)}</td><td>${esc(u.email)}</td><td>${esc(u.phone)}</td><td>${showDisabled ? 'Eliminado / deshabilitado' : u.invitation_pending ? 'Invitación pendiente' : esc(u.status)}</td><td>${esc((u.roles || []).join(', '))}</td><td>${u.event_count}</td><td>${actions}</td></tr>`;
   });
   rows.unshift(`<tr><td colspan="7"><nav class="row-actions" aria-label="Lista de usuarios"><a class="button ${showDisabled ? '' : 'primary'}" href="/admin/users">Usuarios</a><a class="button ${showDisabled ? 'primary' : ''}" href="/admin/users?show=disabled">Eliminados</a></nav></td></tr>`);
-  res.send(layout(req, 'Productores', `<section class="toolbar"><div><h1>Productores y usuarios</h1><p>Crear accesos y administrar usuarios existentes.</p></div></section><form method="post" action="/admin/users" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2 class="span">Crear usuario</h2><label>Nombre<input name="first_name" required></label><label>Apellido<input name="last_name" required></label><label class="span">Email de acceso<input name="email" type="email" required autocomplete="off"></label><label>Tipo de usuario<select name="role"><option value="PRODUCTOR">Productor</option><option value="SISTEMAS">Sistemas</option></select></label><button class="primary span">Crear y enviar invitación</button></form><section class="dossier-section">${table(['Nombre','Email','Teléfono','Estado','Roles','Eventos','Acciones'], rows)}</section>`));
+  res.send(layout(req, 'Productores', `<section class="toolbar"><div><h1>Productores y usuarios</h1><p>Crear accesos y administrar usuarios existentes.</p></div></section><form method="post" action="/admin/users" class="panel form-grid"><input type="hidden" name="_csrf" value="${req.csrfToken}"><h2 class="span">Crear usuario</h2><label>Nombre<input name="first_name" required></label><label>Apellido<input name="last_name" required></label><label class="span">Email de acceso<input name="email" type="email" required autocomplete="off"></label><label>Tipo de usuario<select name="role"><option value="PRODUCTOR">Productor</option>${isSystems(req.user) ? '<option value="SISTEMAS">Sistemas</option>' : ''}</select></label><button class="primary span">Crear y enviar invitación</button></form><section class="dossier-section">${table(['Nombre','Email','Teléfono','Estado','Roles','Eventos','Acciones'], rows)}</section>`));
 });
 
-routes.get('/admin/users/:id/delete', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.get('/admin/users/:id/delete', requireLogin, requireRole(ROLES.ADMIN, ROLES.SYSTEMS), async (req, res) => {
   if (req.params.id === req.user.id) return res.status(400).send('No puede eliminar su propia cuenta.');
   const user = (await db.query('select u.*, (select count(*) from events where owner_user_id=u.id)::int event_count from users u where id=$1', [req.params.id])).rows[0];
   if (!user) return res.status(404).send('Usuario no encontrado');
   res.send(layout(req, 'Eliminar usuario', `<a class="button" href="/admin/users">← Volver a usuarios</a><section class="dossier-section"><h1>Eliminar usuario</h1><p><b>${esc(user.first_name)} ${esc(user.last_name)}</b> · ${esc(user.email)}</p><p>Se bloqueará el acceso y se cerrarán sus sesiones. Sus ${user.event_count} eventos, documentos e historial se conservarán. Podrás restaurarlo desde Eliminados.</p><form method="post" class="form-stack"><input type="hidden" name="_csrf" value="${req.csrfToken}"><label>Escribí ELIMINAR para confirmar<input name="confirmation" required pattern="ELIMINAR" autocomplete="off"></label><div class="row-actions"><a class="button" href="/admin/users">Cancelar</a><button class="danger">Eliminar usuario</button></div></form></section>`, { narrow: true }));
 });
-routes.post('/admin/users/:id/delete', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.post('/admin/users/:id/delete', requireLogin, requireRole(ROLES.ADMIN, ROLES.SYSTEMS), async (req, res) => {
   if (req.body.confirmation !== 'ELIMINAR') return res.status(400).send('Escriba ELIMINAR para confirmar.');
   try {
     await removeUser(req.user.id, req.params.id);
@@ -741,7 +770,7 @@ routes.post('/admin/users/:id/delete', requireLogin, requireRole(ROLES.ADMIN), a
   flash(req, 'ok', 'Usuario eliminado. Se conservaron sus eventos y documentos.');
   res.redirect('/admin/users');
 });
-routes.post('/admin/users/:id/restore', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.post('/admin/users/:id/restore', requireLogin, requireRole(ROLES.ADMIN, ROLES.SYSTEMS), async (req, res) => {
   const user = (await db.query("update users set status='PENDIENTE',invitation_pending=true,email_verified_at=null,email_verification_required=true,updated_at=now() where id=$1 and status='DESHABILITADO' returning id,email", [req.params.id])).rows[0];
   if (!user) return res.status(404).send('Usuario eliminado no encontrado');
   await audit(req.user.id, 'restaurar_usuario', 'users', user.id);
@@ -750,7 +779,11 @@ routes.post('/admin/users/:id/restore', requireLogin, requireRole(ROLES.ADMIN), 
   res.redirect('/admin/users');
 });
 
-routes.post('/admin/users', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.post('/admin/users', requireLogin, requireRole(ROLES.ADMIN, ROLES.SYSTEMS), async (req, res) => {
+  if (!mayManageUser(req.user, [], req.body.role)) {
+    await safelyQueue('PRIVILEGE_DENIED', { actorId: req.user.id, ip: req.ip });
+    return res.status(403).send('Solo Sistemas puede crear cuentas de Sistemas.');
+  }
   try {
     const account = parseBody(z.object({
       first_name: z.string().trim().min(1),
@@ -779,7 +812,7 @@ routes.post('/admin/users', requireLogin, requireRole(ROLES.ADMIN), async (req, 
   res.redirect('/admin/users');
 });
 
-routes.post('/admin/users/:id/invitation', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.post('/admin/users/:id/invitation', requireLogin, requireRole(ROLES.ADMIN, ROLES.SYSTEMS), async (req, res) => {
   const user = (await db.query("select * from users where id=$1 and invitation_pending and status='PENDIENTE'", [req.params.id])).rows[0];
   if (!user) { flash(req, 'error', 'La cuenta no tiene una invitación pendiente.'); return res.redirect('/admin/users'); }
   try {
@@ -789,7 +822,7 @@ routes.post('/admin/users/:id/invitation', requireLogin, requireRole(ROLES.ADMIN
   res.redirect('/admin/users');
 });
 
-routes.post('/admin/users/:id/status', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.post('/admin/users/:id/status', requireLogin, requireRole(ROLES.ADMIN, ROLES.SYSTEMS), async (req, res) => {
   if (req.params.id === req.user.id && req.body.status !== 'ACTIVO') return res.status(400).send('No puede desactivar su propia cuenta.');
   const status = parseBody(z.enum(['PENDIENTE','ACTIVO','BLOQUEADO','DESHABILITADO']), req.body.status);
   const user = (await db.query('select * from users where id=$1', [req.params.id])).rows[0];
@@ -806,12 +839,13 @@ routes.post('/admin/users/:id/status', requireLogin, requireRole(ROLES.ADMIN), a
   res.redirect('/admin/users');
 });
 
-routes.post('/admin/users/:id/role', requireLogin, requireRole(ROLES.ADMIN), async (req, res) => {
+routes.post('/admin/users/:id/role', requireLogin, requireRole(ROLES.ADMIN, ROLES.SYSTEMS), async (req, res) => {
   if (req.params.id === req.user.id) return res.status(400).send('No puede modificar su propio rol.');
   parseBody(z.enum(Object.values(ROLES)), req.body.role);
   await db.tx(async (client) => {
     await client.query('delete from user_roles where user_id=$1', [req.params.id]);
     await client.query('insert into user_roles (user_id, role_id) select $1, id from roles where name=$2', [req.params.id, req.body.role]);
+    await client.query("delete from session where sess->>'userId'=$1", [req.params.id]);
   });
   await audit(req.user.id, 'cambiar_rol_usuario', 'users', req.params.id, { role: req.body.role });
   res.redirect('/admin/users');
@@ -948,11 +982,19 @@ routes.get('/admin/settings', requireLogin, requireRole(ROLES.ADMIN), async (req
 routes.post('/admin/settings/account', requireLogin, requireRole(ROLES.ADMIN), sensitiveLimit, async (req, res) => {
   const account = parseBody(z.object({ first_name:z.string().min(1), last_name:z.string().min(1), phone:z.string().optional(), email:z.string().email(), password:z.union([z.literal(''), z.string().min(12).refine(value => Buffer.byteLength(value) <= 72)]).optional() }), req.body);
   if ((account.password || account.email !== req.user.email) && !await confirmCurrentPassword(req, res)) return;
-  if (account.password) await db.query('update users set first_name=$1,last_name=$2,phone=$3,email=$4,password_hash=$5,updated_at=now() where id=$6', [account.first_name, account.last_name, account.phone, account.email, await hashPassword(account.password), req.user.id]);
-  else await db.query('update users set first_name=$1,last_name=$2,phone=$3,email=$4,updated_at=now() where id=$5', [account.first_name, account.last_name, account.phone, account.email, req.user.id]);
+  const sensitiveChange = Boolean(account.password || account.email !== req.user.email);
+  const passwordHash = account.password ? await hashPassword(account.password) : null;
+  await db.tx(async client => {
+    if (passwordHash) await client.query('update users set first_name=$1,last_name=$2,phone=$3,email=$4,password_hash=$5,updated_at=now() where id=$6', [account.first_name, account.last_name, account.phone, account.email, passwordHash, req.user.id]);
+    else await client.query('update users set first_name=$1,last_name=$2,phone=$3,email=$4,updated_at=now() where id=$5', [account.first_name, account.last_name, account.phone, account.email, req.user.id]);
+    if (sensitiveChange) {
+      await client.query('update password_reset_tokens set used_at=now() where user_id=$1 and used_at is null', [req.user.id]);
+      await client.query('delete from system_settings where key=$1', [`auth_guard_${req.user.id}`]);
+      await client.query('delete from session where sess->>\'userId\'=$1 and sid<>$2', [req.user.id, req.sessionID]);
+    }
+  });
   await audit(req.user.id, 'actualizar_cuenta_admin', 'users', req.user.id);
-  if (account.password) {
-    await db.query('delete from session where sess->>\'userId\'=$1 and sid<>$2', [req.user.id, req.sessionID]);
+  if (sensitiveChange) {
     await new Promise((resolve, reject) => req.session.regenerate(error => error ? reject(error) : resolve()));
     req.session.userId = req.user.id;
   }
@@ -1101,7 +1143,7 @@ routes.post('/systems/backups/:id/restore', requireLogin, requireRole(ROLES.SYST
   try {
     await restoreBackup(backup, req.user.id);
     await audit(req.user.id, 'restaurar_backup', 'backup_runs', backup.id);
-    flash(req, 'ok', 'Base de datos restaurada.');
+    return req.session.destroy(() => res.redirect('/login'));
   } catch (error) {
     flash(req, 'error', `La restauración falló: ${error.message}`);
   }

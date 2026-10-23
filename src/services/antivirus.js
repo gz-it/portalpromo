@@ -13,20 +13,59 @@ function scanFile(file, execute = execFile) {
   });
 }
 
+let activeUploads = 0;
+const owners = new Map();
+
+function reservedUploadBytes(maxFileBytes) { return activeUploads * maxFileBytes; }
+
 function scannedUpload(middleware, enabled, scan = scanFile) {
-  return (req, res, next) => middleware(req, res, error => {
-    const finish = async () => {
-      if (error) throw error;
-      if (enabled && req.file) await scan(req.file.path);
+  return (req, res, next) => {
+    const owner = req.user?.id || req.ip || 'anonymous';
+    if (activeUploads >= 8 || (owners.get(owner) || 0) >= 2) return next(Object.assign(new Error('Demasiadas cargas simultaneas.'), { status: 429 }));
+    activeUploads++;
+    owners.set(owner, (owners.get(owner) || 0) + 1);
+    let released = false;
+    let closed = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      activeUploads--;
+      const remaining = owners.get(owner) - 1;
+      remaining ? owners.set(owner, remaining) : owners.delete(owner);
     };
-    finish().then(() => next(), async failure => {
-      if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
-      if (['UPLOAD_INFECTED', 'SCAN_UNAVAILABLE'].includes(failure.code)) {
-        await require('./security-alerts').safelyQueue(failure.code, { actorId: req.user?.id, ip: req.ip });
+    const discard = () => {
+      closed = true;
+      release();
+      if (req.file) {
+        req.file.discarded = true;
+        if (!req.file.retained && !req.file.saving) fs.unlink(req.file.path).catch(() => {});
       }
-      next(failure);
-    });
-  });
+    };
+    res.once?.('finish', discard);
+    res.once?.('close', discard);
+    const complete = error => {
+      const finish = async () => {
+        if (error) throw error;
+        if (closed) { discard(); return; }
+        if (enabled && req.file) await scan(req.file.path);
+      };
+      finish().then(() => {
+        if (closed) { discard(); return; }
+        if (!res.once) release();
+        next();
+      }, async failure => {
+        release();
+        if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
+        if (closed) return;
+        if (['UPLOAD_INFECTED', 'SCAN_UNAVAILABLE'].includes(failure.code)) {
+          await require('./security-alerts').safelyQueue(failure.code, { actorId: req.user?.id, ip: req.ip });
+        }
+        next(failure);
+      });
+    };
+    try { middleware(req, res, complete); }
+    catch (error) { complete(error); }
+  };
 }
 
-module.exports = { scanFile, scannedUpload };
+module.exports = { scanFile, scannedUpload, reservedUploadBytes };

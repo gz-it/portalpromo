@@ -90,6 +90,23 @@ async function main() {
     assert.equal((await administrator.post('/admin/updates/run', {})).status, 403);
     assert.equal((await administrator.post('/admin/updates/check', {})).status, 403);
     assert.equal((await administrator.request('/admin/settings/account', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'first_name=SinToken' })).status, 403);
+    const systemsUser = (await db.query(`insert into users(first_name,last_name,email,username,password_hash,status)
+      values('Tecnico','Prueba','systems@example.invalid','systems@example.invalid',$1,'ACTIVO') returning id`, [await hashPassword(password)])).rows[0];
+    await db.query("insert into user_roles select $1,id from roles where name='SISTEMAS'", [systemsUser.id]);
+    const systemsSession = session();
+    assert.equal((await systemsSession.login('systems@example.invalid')).location, '/dashboard');
+    const systemsUsers = await systemsSession.request('/admin/users');
+    assert.equal(systemsUsers.status, 200);
+    assert.match(systemsUsers.text, /href="\/systems">.*Volver al panel/);
+    assert.equal((await systemsSession.request('/admin')).status, 403);
+    assert.doesNotMatch((await administrator.request('/admin/users')).text, /<option value="SISTEMAS"/);
+    assert.equal((await administrator.post('/admin/users', { first_name:'No',last_name:'Permitido',email:'escalation@example.invalid',role:'SISTEMAS' })).status, 403);
+    for (const [action, body] of [['status', {status:'BLOQUEADO'}], ['role', {role:'PRODUCTOR'}], ['delete', {confirmation:'ELIMINAR'}], ['restore', {}], ['invitation', {}]]) {
+      assert.equal((await administrator.post(`/admin/users/${systemsUser.id}/${action}`, body)).status, 403);
+    }
+    assert.equal((await administrator.request(`/admin/users/${systemsUser.id}/delete`)).status, 403);
+    assert.equal((await db.query('select status from users where id=$1', [systemsUser.id])).rows[0].status, 'ACTIVO');
+    console.log('PASS privilegios: administrador no puede crear, degradar, bloquear, eliminar ni reinvitar Sistemas; Sistemas tiene gestion exclusiva de esos accesos');
     for (const section of ['cuenta', 'portal', 'notificaciones']) {
       const page = await administrator.request(`/admin/settings?section=${section}`);
       assert.equal(page.status, 200);
@@ -118,6 +135,15 @@ async function main() {
     const eventId = result.location.match(/events\/([a-f0-9-]+)/)[1];
     await producer.request(`/events/${eventId}/modules/seguros`);
     await producer.upload(`/events/${eventId}/modules/seguros/entries`, 'Seguro prueba');
+    const uploadedFiles = () => fs.readdirSync(path.join(process.env.STORAGE_PATH, eventId)).sort();
+    const beforeInvalidUpload = uploadedFiles();
+    assert.equal((await producer.upload(`/events/${eventId}/modules/seguros/entries`, ' ')).status, 302);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.deepEqual(uploadedFiles(), beforeInvalidUpload, 'Una carga sin titulo no debe dejar archivos huerfanos');
+    assert.equal((await producer.upload(`/events/${eventId}/modules/no-existe/entries`, 'Invalido')).status, 400);
+    assert.equal((await producer.upload(`/events/${eventId}/modules/aceptacion/items`, 'Invalido')).status, 400);
+    assert.equal((await producer.post(`/events/${eventId}/modules/seguros/items`, {})).status, 400);
+    assert.deepEqual(uploadedFiles(), beforeInvalidUpload);
     assert.equal((await producer.post(`/events/${eventId}/review/seguros`, { status:'APROBADO' })).status, 403);
     assert.equal((await administrator.post(`/events/${eventId}/modules/identificacion/company`, { legal_name:'No permitido' })).status, 403);
     assert.equal((await producer.request('/systems')).status, 403);
@@ -162,6 +188,7 @@ async function main() {
     const other = (await db.query(`insert into users(first_name,last_name,email,username,password_hash,status)
       values('Otro','Productor','other@example.invalid','other@example.invalid',$1,'ACTIVO') returning id`, [await hashPassword(password)])).rows[0];
     await db.query("insert into user_roles select $1,id from roles where name='PRODUCTOR'", [other.id]);
+    assert.equal((await administrator.post(`/admin/users/${other.id}/role`, { role:'SISTEMAS' })).status, 403);
     const outsider = session();
     await outsider.login('other@example.invalid');
     await outsider.request('/dashboard');
@@ -212,7 +239,9 @@ async function main() {
     assert.equal((await administrator.post('/admin/settings/account', { ...changedAccount, current_password: 'wrong' })).status, 403);
     assert.equal((await db.query('select email from users where id=$1', [admin.id])).rows[0].email, 'admin@example.invalid');
     assert.equal((await administrator.post('/admin/settings/account', { ...changedAccount, current_password: password })).status, 302);
+    await administrator.request('/admin/settings?section=cuenta');
     assert.equal((await administrator.post('/admin/settings/account', { ...changedAccount, email: 'admin@example.invalid', current_password: password })).status, 302);
+    await administrator.request('/admin/settings?section=cuenta');
     await db.query('delete from user_roles where user_id=$1', [other.id]);
     await db.query("insert into user_roles select $1,id from roles where name='SISTEMAS'", [other.id]);
     await outsider.request('/systems');
@@ -301,6 +330,7 @@ async function main() {
     fs.mkdirSync(fullStaging);
     const fullEnv = path.join(directory, 'web-snapshot.env');
     fs.writeFileSync(fullEnv, `SESSION_SECRET=${process.env.SESSION_SECRET}\n`);
+    for (const table of ['password_reset_tokens','user_invitation_tokens','email_verification_tokens']) await db.query(`insert into ${table}(user_id,token_hash,expires_at) values($1,$2,now()+interval '1 hour')`,[admin.id,randomUUID()]);
     await recovery.create({ directory:fullStaging,output:path.join(directory,'web-snapshot.ppr'),envFile:fullEnv,keyFile });
     const zipKey = 'isolated-restore-test-password-123456';
     const zipFile = path.join(directory, 'web-recovery.zip');
@@ -344,9 +374,25 @@ async function main() {
     assert.equal((await db.query('select name from events where id=$1', [eventId])).rows[0].name, 'Revision aislada');
     assert.deepEqual(fs.readFileSync(path.join(process.env.STORAGE_PATH, restoredFile.storage_key)), originalBytes);
     assert.equal((await administrator.request('/systems')).location, '/login');
+    for (const table of ['password_reset_tokens','user_invitation_tokens','email_verification_tokens']) assert.equal((await db.query(`select count(*)::int n from ${table} where used_at is null`)).rows[0].n,0,'No reactivar enlaces viejos del respaldo');
     assert.equal((await administrator.login('admin@example.invalid')).status, 302);
     assert.equal((await administrator.request('/systems')).status, 200);
     console.log('PASS restauracion completa desde formulario: ZIP cifrado, permisos, claves, datos, adjuntos y cierre de sesiones');
+    const guessing = session();
+    await guessing.request('/login');
+    for (let i=0;i<10;i++) assert.equal((await guessing.post('/login', {login:'other@example.invalid',password:'incorrect'})).status,302);
+    assert.equal((await guessing.post('/login', {login:'other@example.invalid',password})).status,429);
+    await guessing.request('/forgot');
+    assert.equal((await guessing.post('/forgot',{email:'other@example.invalid'})).status,302);
+    const beforeResend = outbox.filter(item=>item[0]==='other@example.invalid' && item[2].includes('/reset/')).length;
+    assert.equal((await guessing.post('/forgot',{email:'other@example.invalid'})).status,302);
+    assert.equal(outbox.filter(item=>item[0]==='other@example.invalid' && item[2].includes('/reset/')).length,beforeResend,'No reenviar recuperaciones repetidas dentro de cinco minutos');
+    const resetMail = outbox.filter(item=>item[0]==='other@example.invalid' && item[2].includes('/reset/')).at(-1);
+    const resetToken = resetMail[2].match(/reset\/([a-f0-9]+)/)[1];
+    await guessing.request(`/reset/${resetToken}`);
+    assert.equal((await guessing.post(`/reset/${resetToken}`,{password})).status,302);
+    assert.equal((await guessing.login('other@example.invalid')).location,'/dashboard');
+    console.log('PASS bloqueo persistente por cuenta y recuperacion por correo: no depende de cambiar la IP ni agrega un segundo factor');
     await attacker.request('/login');
     const originalCookie = attacker.cookie();
     assert.equal((await attacker.post('/login', { login: 'admin@example.invalid', password })).status, 302);
@@ -367,6 +413,25 @@ async function main() {
     assert.match(securityMails.at(-1)[2], /intentos|ingreso/i);
     assert.equal(securityMails.at(-1)[2].includes(password), false);
     console.log('PASS alertas: cola persistente, resumen, destinatario exclusivo, sin secretos y sin duplicar envios concurrentes (correo simulado)');
+    const legacy = require('../src/services/backups');
+    await db.query("insert into session(sid,sess,expire) values('snapshot-session',$1,now()+interval '1 hour')", [JSON.stringify({userId:admin.id})]);
+    await db.query("insert into password_reset_tokens(user_id,token_hash,expires_at) values($1,$2,now()+interval '1 hour')",[admin.id,randomUUID()]);
+    const goodDump = await legacy.createBackup({notify:false});
+    const systemRoles = (await db.query("select user_id,role_id from user_roles where role_id=(select id from roles where name='SISTEMAS')")).rows;
+    const badDump = path.join(process.env.BACKUP_PATH,'bad-no-systems.dump');
+    await db.query("delete from user_roles where role_id=(select id from roles where name='SISTEMAS')");
+    try { command('pg_dump',['--format=custom','--file',badDump],{env:recovery.pgEnvironment(scratch.toString())}); }
+    finally { for (const role of systemRoles) await db.query('insert into user_roles(user_id,role_id) values($1,$2)',[role.user_id,role.role_id]); }
+    await db.query("update events set name='Cambio previo a restore legacy' where id=$1",[eventId]);
+    await assert.rejects(legacy.restoreBackup({target:badDump},admin.id), /Sistemas/);
+    assert.equal((await db.query('select name from events where id=$1',[eventId])).rows[0].name,'Cambio previo a restore legacy');
+    assert.equal((await db.query("select 1 from session where sid='snapshot-session'")).rowCount,1);
+    await legacy.restoreBackup(goodDump,admin.id);
+    assert.equal((await db.query('select name from events where id=$1',[eventId])).rows[0].name,'Revision aislada');
+    assert.equal((await db.query('select count(*)::int n from session')).rows[0].n,0);
+    assert.equal((await db.query('select count(*)::int n from password_reset_tokens where used_at is null')).rows[0].n,0);
+    assert.equal(require('../src/services/restore-maintenance').isRestoring(),false);
+    console.log('PASS restore .dump: rollback de respaldo sin Sistemas, documentos verificados, cierre de sesiones restauradas y mantenimiento liberado');
   } finally {
     if (server) await new Promise(resolve => server.close(resolve));
     if (db) await db.pool.end();

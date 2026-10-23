@@ -22,7 +22,7 @@ function layout(req, title, body, options = {}) {
   const backRoutes = {
     '/admin/events': ['/admin', 'Volver al panel'],
     '/admin/reviews': ['/admin', 'Volver al panel'],
-    '/admin/users': ['/admin', 'Volver al panel'],
+    '/admin/users': [user?.roles.includes(ROLES.SYSTEMS) && !user?.roles.includes(ROLES.ADMIN) ? '/systems' : '/admin', 'Volver al panel'],
     '/admin/settings': ['/admin', 'Volver al panel'],
     '/events/new': ['/dashboard', 'Volver a mis eventos'],
   };
@@ -41,7 +41,7 @@ function layout(req, title, body, options = {}) {
         <a class="notification-link" href="/notifications">Notificaciones${user.unread_notifications ? `<span>${user.unread_notifications}</span>` : ''}</a>
         <span class="user-name">${esc(user.first_name)} ${esc(user.last_name)}</span>
         ${user.roles.includes(ROLES.ADMIN) && req.path !== '/admin' ? '<a href="/admin">Panel general</a>' : ''}
-        ${user.roles.includes(ROLES.SYSTEMS) ? '<a href="/systems">Sistemas</a>' : ''}
+        ${user.roles.includes(ROLES.SYSTEMS) ? '<a href="/systems">Sistemas</a><a href="/admin/users">Usuarios y accesos</a>' : ''}
         <form method="post" action="/logout"><input type="hidden" name="_csrf" value="${req.csrfToken}"><button>Salir</button></form>
       </nav>
     </header>` : '';

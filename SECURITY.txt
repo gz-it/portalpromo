@@ -1,4 +1,5 @@
-ULTIMA REVISION DEL VPS DEFINITIVO: SEGURIDAD-2026-10-22.txt
+ULTIMA REVISION DEL VPS DEFINITIVO: SEGURIDAD-2026-10-23.txt
+Revision anterior y alertas: SEGURIDAD-2026-10-22.txt y ALERTAS-SEGURIDAD.txt.
 El texto siguiente es historico y corresponde al servidor de prueba.
 
 PORTAL DE PRODUCTORES - REVISION 2026-10-08

@@ -90,7 +90,7 @@ async function main() {
     state.pending.shift();
     save(state);
   }
-  const result = await flushSecurityAlerts();
+  const result = await flushSecurityAlerts({ allowMaintenance: true });
   console.log(JSON.stringify({ checked: true, controls: Object.keys(checks).length, issues: Object.values(checks).filter(value => value !== 'correcto').length, ...result }));
 }
 

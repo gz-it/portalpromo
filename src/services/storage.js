@@ -6,7 +6,7 @@ const mime = require('mime-types');
 const sanitize = require('sanitize-filename');
 const config = require('../config');
 const db = require('../db');
-const { scannedUpload } = require('./antivirus');
+const { scannedUpload, reservedUploadBytes } = require('./antivirus');
 
 fs.mkdirSync(config.storagePath, { recursive: true });
 
@@ -22,13 +22,14 @@ const storage = multer.diskStorage({
     const dir = path.join(config.storagePath, eventPart);
     fs.statfs(config.storagePath, (error, stats) => {
       if (error) return cb(error);
-      const reserve = (config.maxUploadSizeMb + 512) * 1024 * 1024;
+      const maxFileBytes = config.maxUploadSizeMb * 1024 * 1024;
+      const reserve = Math.max(maxFileBytes, reservedUploadBytes(maxFileBytes)) + 512 * 1024 * 1024;
       if (Number(stats.bavail) * Number(stats.bsize) < reserve) return cb(Object.assign(new Error('Espacio insuficiente para una carga segura.'), { status: 503 }));
       fs.mkdir(dir, { recursive: true }, mkdirError => cb(mkdirError, dir));
     });
   },
   filename(req, file, cb) {
-    cb(null, `${randomUUID()}-${sanitize(file.originalname)}`);
+    cb(null, `${randomUUID()}${path.extname(file.originalname).toLowerCase()}`);
   },
 });
 
@@ -44,6 +45,7 @@ const multipart = multer({
 const upload = { single: field => scannedUpload(multipart.single(field), config.uploadAntivirus) };
 
 async function saveAttachment({ file, eventId, moduleKey, userId }) {
+  if (!file || file.discarded) throw Object.assign(new Error('Carga incompleta o cancelada.'), { status: 400 });
   const handle = await fs.promises.open(file.path, 'r');
   const header = Buffer.alloc(4096);
   const { bytesRead } = await handle.read(header, 0, header.length, 0).finally(() => handle.close());
@@ -65,11 +67,20 @@ async function saveAttachment({ file, eventId, moduleKey, userId }) {
     throw Object.assign(new Error('El contenido no coincide con el formato permitido.'), { status: 400 });
   }
   const relative = path.relative(config.storagePath, file.path).replace(/\\/g, '/');
-  const result = await db.query(
-    `insert into attachments (event_id,module_key,original_name,internal_name,storage_key,mime_type,size_bytes,uploaded_by)
-     values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
-    [eventId || null, moduleKey || null, sanitize(file.originalname), file.filename, relative, mime.lookup(file.originalname) || 'application/octet-stream', file.size, userId],
-  );
+  if (file.discarded) throw Object.assign(new Error('Carga cancelada.'), { status: 400 });
+  file.saving = true;
+  let result;
+  try {
+    result = await db.query(
+      `insert into attachments (event_id,module_key,original_name,internal_name,storage_key,mime_type,size_bytes,uploaded_by)
+       values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
+      [eventId || null, moduleKey || null, sanitize(file.originalname), file.filename, relative, mime.lookup(file.originalname) || 'application/octet-stream', file.size, userId],
+    );
+    file.retained = true;
+  } catch (error) {
+    await fs.promises.unlink(file.path).catch(() => {});
+    throw error;
+  } finally { file.saving = false; }
   return result.rows[0];
 }
 
